@@ -431,11 +431,11 @@ function renderTopologySVG(services, edges) {
             <animate attributeName="opacity" values="0.6;0.1;0.6" dur="2s" repeatCount="indefinite"/>
           </circle>
         ` : ''}
-        <circle r="18" fill="#131b2e" stroke="${color}" stroke-width="2.5" />
-        <text y="4" text-anchor="middle" fill="#f8fafc" font-size="9" font-weight="700" font-family="JetBrains Mono, monospace">
+        <circle r="18" fill="var(--topology-node-bg)" stroke="${color}" stroke-width="2.5" />
+        <text y="4" text-anchor="middle" fill="var(--text-primary)" font-size="9" font-weight="700" font-family="JetBrains Mono, monospace">
           ${svcName.split('-')[0].slice(0, 4).toUpperCase()}
         </text>
-        <text y="32" text-anchor="middle" fill="#94a3b8" font-size="10" font-weight="600" font-family="Plus Jakarta Sans, sans-serif">
+        <text y="32" text-anchor="middle" fill="var(--text-muted)" font-size="10" font-weight="600" font-family="Plus Jakarta Sans, sans-serif">
           ${svcName}
         </text>
       </g>
@@ -975,7 +975,36 @@ async function verifyAuditChain() {
 /* ==============================================================================
  * TABS & DOM INITIALIZATION
  * ============================================================================== */
+// Theme Manager
+function initTheme() {
+  const savedTheme = localStorage.getItem("sre-theme") || "dark";
+  applyTheme(savedTheme);
+
+  const themeBtns = document.querySelectorAll(".theme-btn");
+  themeBtns.forEach(btn => {
+    btn.addEventListener("click", () => {
+      const themeVal = btn.getAttribute("data-theme-val");
+      applyTheme(themeVal);
+    });
+  });
+}
+
+function applyTheme(theme) {
+  document.body.setAttribute("data-theme", theme);
+  localStorage.setItem("sre-theme", theme);
+
+  const themeBtns = document.querySelectorAll(".theme-btn");
+  themeBtns.forEach(btn => {
+    if (btn.getAttribute("data-theme-val") === theme) {
+      btn.classList.add("active");
+    } else {
+      btn.classList.remove("active");
+    }
+  });
+}
+
 document.addEventListener("DOMContentLoaded", () => {
+  initTheme();
   authenticate("operator");
   initWebSocket();
   fetchAiStatus();

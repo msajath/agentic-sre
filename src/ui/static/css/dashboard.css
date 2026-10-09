@@ -3,8 +3,8 @@
  * Crafted with Senior UI/UX Design System Standards
  */
 
-:root {
-  /* Slate & Zinc Dark Palette */
+:root, body[data-theme="dark"] {
+  /* Dark Slate Mode (Default Enterprise Theme) */
   --bg-app: #080c14;
   --bg-surface: #0f1523;
   --bg-surface-elevated: #151d30;
@@ -19,7 +19,6 @@
   --text-muted: #64748b;
   --text-dim: #475569;
   
-  /* Status Colors */
   --status-healthy: #10b981;
   --status-healthy-bg: rgba(16, 185, 129, 0.1);
   --status-healthy-border: rgba(16, 185, 129, 0.25);
@@ -35,7 +34,78 @@
   --accent-primary: #3b82f6;
   --accent-primary-hover: #2563eb;
   --accent-purple: #8b5cf6;
+  --topology-node-bg: #131b2e;
+}
+
+body[data-theme="night"] {
+  /* Night Mode (OLED Pure Pitch-Black) */
+  --bg-app: #000000;
+  --bg-surface: #060608;
+  --bg-surface-elevated: #0d0d12;
+  --bg-surface-hover: #16161f;
   
+  --border-subtle: rgba(255, 255, 255, 0.1);
+  --border-medium: rgba(255, 255, 255, 0.18);
+  --border-focus: #38bdf8;
+  
+  --text-primary: #ffffff;
+  --text-secondary: #a1a1aa;
+  --text-muted: #71717a;
+  --text-dim: #52525b;
+  
+  --status-healthy: #22c55e;
+  --status-healthy-bg: rgba(34, 197, 94, 0.12);
+  --status-healthy-border: rgba(34, 197, 94, 0.35);
+
+  --status-degraded: #eab308;
+  --status-degraded-bg: rgba(234, 179, 8, 0.12);
+  --status-degraded-border: rgba(234, 179, 8, 0.35);
+
+  --status-critical: #f43f5e;
+  --status-critical-bg: rgba(244, 63, 94, 0.14);
+  --status-critical-border: rgba(244, 63, 94, 0.4);
+
+  --accent-primary: #38bdf8;
+  --accent-primary-hover: #0284c7;
+  --accent-purple: #c084fc;
+  --topology-node-bg: #09090d;
+}
+
+body[data-theme="light"] {
+  /* Daylight Mode (Crisp White / Clean Slate) */
+  --bg-app: #f1f5f9;
+  --bg-surface: #ffffff;
+  --bg-surface-elevated: #f8fafc;
+  --bg-surface-hover: #e2e8f0;
+  
+  --border-subtle: rgba(0, 0, 0, 0.08);
+  --border-medium: rgba(0, 0, 0, 0.15);
+  --border-focus: #2563eb;
+  
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #64748b;
+  --text-dim: #94a3b8;
+  
+  --status-healthy: #059669;
+  --status-healthy-bg: rgba(5, 150, 105, 0.1);
+  --status-healthy-border: rgba(5, 150, 105, 0.25);
+
+  --status-degraded: #d97706;
+  --status-degraded-bg: rgba(217, 119, 6, 0.1);
+  --status-degraded-border: rgba(217, 119, 6, 0.25);
+
+  --status-critical: #dc2626;
+  --status-critical-bg: rgba(220, 38, 38, 0.1);
+  --status-critical-border: rgba(220, 38, 38, 0.25);
+
+  --accent-primary: #2563eb;
+  --accent-primary-hover: #1d4ed8;
+  --accent-purple: #7c3aed;
+  --topology-node-bg: #f8fafc;
+}
+
+:root {
   --radius-xs: 4px;
   --radius-sm: 6px;
   --radius-md: 8px;
@@ -170,8 +240,44 @@ body {
 }
 
 .role-select option {
-  background: #0f1523;
+  background: var(--bg-surface);
   color: var(--text-primary);
+}
+
+/* Theme Switcher Controls */
+.theme-switcher-wrapper {
+  display: flex;
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-md);
+  padding: 2px;
+  gap: 2px;
+}
+
+.theme-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.2rem 0.55rem;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: pointer;
+  transition: all 0.15s ease-in-out;
+}
+
+.theme-btn:hover {
+  color: var(--text-primary);
+}
+
+.theme-btn.active {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 
 /* Status Indicators */
@@ -534,7 +640,7 @@ body {
 
 /* Topology Diagram */
 .topology-box {
-  background: #090d16;
+  background: var(--bg-surface-elevated);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   padding: 1rem;
