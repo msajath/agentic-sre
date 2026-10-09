@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  agentic-sre:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: agentic-sre-platform
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_NAME=Agentic SRE Platform
+      - ENVIRONMENT=production
+      - DEBUG=False
+      - HOST=0.0.0.0
+      - PORT=8000
+    volumes:
+      # Persistent volume for SQLite database and audit ledgers
+      - sre-data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  sre-data:
+    driver: local

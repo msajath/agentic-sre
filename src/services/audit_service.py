@@ -35,10 +35,13 @@ class AuditService:
                 db_entries = session.query(AuditLogModel).order_by(AuditLogModel.timestamp.asc()).all()
                 if db_entries:
                     for row in db_entries:
+                        ts = row.timestamp
+                        if ts.tzinfo is None:
+                            ts = ts.replace(tzinfo=timezone.utc)
                         self._ledger.append(
                             AuditLogEntry(
                                 log_id=row.log_id,
-                                timestamp=row.timestamp,
+                                timestamp=ts,
                                 event_type=AuditEventType(row.event_type),
                                 actor=row.actor,
                                 actor_role=row.actor_role,
