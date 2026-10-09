@@ -46,6 +46,14 @@ from src.models.correlation import (
     DiagnosticReport,
     CorrelatedIncidentGroup,
 )
+from src.models.remediation import (
+    RemediationActionType,
+    RemediationState,
+    RuleEvaluationResult,
+    RemediationPlan,
+    ProposePlanRequest,
+    ApprovalDecisionRequest,
+)
 
 __all__ = [
     "ServiceStatus",
@@ -80,4 +88,10 @@ __all__ = [
     "ForensicEvidence",
     "DiagnosticReport",
     "CorrelatedIncidentGroup",
+    "RemediationActionType",
+    "RemediationState",
+    "RuleEvaluationResult",
+    "RemediationPlan",
+    "ProposePlanRequest",
+    "ApprovalDecisionRequest",
 ]

@@ -517,6 +517,145 @@ async function emergencyReset() {
   }
 }
 
+// Sprints 5 & 6: Remediation Approval Gateway
+async function fetchRemediationPlans() {
+  const container = document.getElementById("remediation-plans-container");
+  if (!container) return;
+
+  try {
+    const res = await fetch("/api/v1/remediation/plans");
+    if (!res.ok) return;
+    const plans = await res.json();
+
+    if (plans.length === 0) {
+      container.innerHTML = `<div style="font-size: 0.8rem; color: var(--text-dim); padding: 0.5rem 0;">No active or past remediation plans.</div>`;
+      return;
+    }
+
+    container.innerHTML = plans.map(p => {
+      let actionButtons = '';
+      if (p.state === "PENDING_APPROVAL") {
+        actionButtons = `
+          <button class="btn btn-primary" style="padding: 0.2rem 0.55rem; font-size: 0.72rem;" onclick="approvePlan('${p.plan_id}')">
+            Approve & Execute
+          </button>
+          <button class="btn btn-secondary" style="padding: 0.2rem 0.55rem; font-size: 0.72rem;" onclick="rejectPlan('${p.plan_id}')">
+            Reject
+          </button>
+        `;
+      }
+
+      const statusColor = p.state === 'VERIFIED_SUCCESSFUL' ? 'HEALTHY' : (p.state === 'REJECTED' || p.state === 'FAILED_ROLLBACK' ? 'CRITICAL' : 'DEGRADED');
+
+      return `
+        <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 0.7rem; margin-bottom: 0.5rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+              <span style="font-weight: 800; color: #a5b4fc; font-size: 0.85rem;">${p.plan_id}</span>
+              <span style="font-weight: 700; margin-left: 0.4rem; font-size: 0.82rem;">${p.action_type}</span>
+              <span style="color: var(--text-muted); font-size: 0.8rem;">on <strong>${p.target_service}</strong></span>
+            </div>
+            <span class="status-badge badge-${statusColor}">${p.state}</span>
+          </div>
+
+          <div style="font-size: 0.72rem; color: var(--text-dim); margin-top: 0.35rem;">
+            Blast Radius: <strong>${(p.safety_blast_radius || []).join(', ') || 'Isolated'}</strong> | Proposed by: <em>${p.proposed_by}</em>
+          </div>
+
+          ${p.recovery_verification_notes ? `
+            <div style="margin-top: 0.35rem; font-size: 0.72rem; color: #86efac; background: rgba(34, 197, 94, 0.1); padding: 0.3rem 0.5rem; border-radius: var(--radius-sm);">
+              ✔ ${p.recovery_verification_notes}
+            </div>
+          ` : ''}
+
+          ${actionButtons ? `
+            <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 0.5rem;">
+              ${actionButtons}
+            </div>
+          ` : ''}
+        </div>
+      `;
+    }).join('');
+  } catch (err) {
+    console.error("Fetch remediation plans error:", err);
+  }
+}
+
+async function proposeAutoRemediation() {
+  const rootSvc = (currentIncidentCandidate && currentIncidentCandidate.root_cause_service) || "payment-service";
+  const incId = (currentIncidentCandidate && currentIncidentCandidate.incident_id) || `INC-${Date.now().toString().slice(-4)}`;
+
+  try {
+    const res = await fetch("/api/v1/remediation/propose", {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        incident_id: incId,
+        target_service: rootSvc,
+        action_type: "RESTART_SERVICE",
+        parameters: { reason: "RCA-recommended automated restart & fault clearance" }
+      })
+    });
+    if (res.ok) {
+      alert(`Remediation plan proposed for [${rootSvc}] awaiting human approval!`);
+      fetchRemediationPlans();
+      fetchAuditLogs();
+    } else {
+      const err = await res.json();
+      alert(`Proposal failed: ${err.detail}`);
+    }
+  } catch (err) {
+    console.error("Propose remediation error:", err);
+  }
+}
+
+async function approvePlan(planId) {
+  const reason = prompt(`[SRE Lead Approval Gate]\nEnter approval rationale for executing ${planId}:`, "Approved after reviewing cascade graph and telemetry");
+  if (!reason) return;
+
+  try {
+    const res = await fetch(`/api/v1/remediation/plans/${planId}/approve`, {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ reason })
+    });
+    if (res.ok) {
+      const plan = await res.json();
+      alert(`Remediation Executed & Verified!\nState: ${plan.state}\nNotes: ${plan.recovery_verification_notes}`);
+      fetchRemediationPlans();
+      fetchIncidents();
+      fetchAuditLogs();
+    } else {
+      const err = await res.json();
+      alert(`Approval denied: ${err.detail}`);
+    }
+  } catch (err) {
+    console.error("Approve plan error:", err);
+  }
+}
+
+async function rejectPlan(planId) {
+  const reason = prompt(`Enter rejection reason for ${planId}:`, "Declined by SRE Lead");
+  if (!reason) return;
+
+  try {
+    const res = await fetch(`/api/v1/remediation/plans/${planId}/reject`, {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ reason })
+    });
+    if (res.ok) {
+      fetchRemediationPlans();
+      fetchAuditLogs();
+    } else {
+      const err = await res.json();
+      alert(`Rejection failed: ${err.detail}`);
+    }
+  } catch (err) {
+    console.error("Reject plan error:", err);
+  }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   authenticate("operator");
   initWebSocket();
@@ -545,4 +684,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const auditPill = document.getElementById("audit-pill");
   if (auditPill) auditPill.addEventListener("click", verifyAuditChain);
+
+  const proposeBtn = document.getElementById("btn-propose-remediation");
+  if (proposeBtn) proposeBtn.addEventListener("click", proposeAutoRemediation);
+
+  const refreshPlansBtn = document.getElementById("btn-refresh-plans");
+  if (refreshPlansBtn) refreshPlansBtn.addEventListener("click", fetchRemediationPlans);
 });
+

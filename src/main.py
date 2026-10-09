@@ -17,10 +17,12 @@ from src.api.chaos_router import router as chaos_router
 from src.api.incident_router import router as incident_router
 from src.api.audit_router import router as audit_router
 from src.api.correlation_router import router as correlation_router
+from src.api.remediation_router import router as remediation_router
 from src.api.telemetry_router import router as telemetry_router
 from src.api.topology_router import router as topology_router
 from src.api.ws_router import router as ws_router
 from src.config import settings
+from src.database import init_db
 from src.services.simulation_engine import simulation_engine
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -32,8 +34,12 @@ TEMPLATES_DIR = BASE_DIR / "ui" / "templates"
 async def lifespan(app: FastAPI):
     """
     Manages background services lifecycle.
-    Starts simulation loop on boot, cleans up gracefully on exit.
+    Initializes database schema, starts simulation loop on boot, cleans up gracefully on exit.
     """
+    # 0. Initialize persistent SQLite database
+    init_db()
+    print("[Agentic SRE] Persistent SQLite database connected & verified.")
+
     # 1. Start cluster simulation
     simulation_engine.start()
     print("[Agentic SRE] Cluster microservice simulator started.")
@@ -83,6 +89,7 @@ app.include_router(chaos_router)
 app.include_router(topology_router)
 app.include_router(audit_router)
 app.include_router(correlation_router)
+app.include_router(remediation_router)
 app.include_router(ws_router)
 
 

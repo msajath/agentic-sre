@@ -4,9 +4,11 @@ Enforces auditable state transitions, SLA tracking, and forensic timelines.
 """
 
 from datetime import datetime, timezone
+import json
 import threading
 from typing import Dict, List, Optional
 
+from src.database import IncidentModel, SessionLocal
 from src.models.audit import AuditEventType
 from src.models.incident import (
     IncidentRecord,
@@ -33,6 +35,61 @@ class IncidentService:
     def __init__(self):
         self._lock = threading.Lock()
         self._incidents: Dict[str, IncidentRecord] = {}
+        self._load_from_db()
+
+    def _load_from_db(self):
+        """Hydrates active incidents from persistent SQLite database."""
+        with SessionLocal() as session:
+            try:
+                for row in session.query(IncidentModel).all():
+                    timeline_events = [IncidentTimelineEvent(**e) for e in json.loads(row.timeline)]
+                    self._incidents[row.incident_id] = IncidentRecord(
+                        incident_id=row.incident_id,
+                        title=row.title,
+                        description=row.description,
+                        state=IncidentState(row.state),
+                        severity=IncidentSeverity(row.severity),
+                        root_cause_service=row.root_cause_service,
+                        affected_services=json.loads(row.affected_services),
+                        timeline=timeline_events,
+                        created_at=row.created_at,
+                        updated_at=row.updated_at,
+                        resolved_at=row.resolved_at,
+                    )
+            except Exception as e:
+                print(f"[Incident DB Hydration Warning] {e}")
+
+    def _save_incident_to_db(self, incident: IncidentRecord):
+        """Upserts an incident record into SQLite."""
+        with SessionLocal() as session:
+            try:
+                row = session.query(IncidentModel).filter_by(incident_id=incident.incident_id).first()
+                timeline_json = json.dumps([e.model_dump(mode="json") for e in incident.timeline])
+                affected_json = json.dumps(incident.affected_services)
+                
+                if not row:
+                    row = IncidentModel(
+                        incident_id=incident.incident_id,
+                        title=incident.title,
+                        description=incident.description,
+                        state=incident.state.value,
+                        severity=incident.severity.value,
+                        root_cause_service=incident.root_cause_service,
+                        affected_services=affected_json,
+                        timeline=timeline_json,
+                        created_at=incident.created_at,
+                        updated_at=incident.updated_at,
+                        resolved_at=incident.resolved_at,
+                    )
+                    session.add(row)
+                else:
+                    row.state = incident.state.value
+                    row.timeline = timeline_json
+                    row.updated_at = incident.updated_at
+                    row.resolved_at = incident.resolved_at
+                session.commit()
+            except Exception as e:
+                print(f"[Incident DB Save Warning] {e}")
 
     def create_incident(
         self,
@@ -66,6 +123,7 @@ class IncidentService:
             )
 
             self._incidents[incident.incident_id] = incident
+            self._save_incident_to_db(incident)
 
         # Record cryptographically chained audit log
         audit_service.record_event(
@@ -125,6 +183,7 @@ class IncidentService:
                     note=reason,
                 )
             )
+            self._save_incident_to_db(incident)
 
         # Audit log the state transition
         audit_service.record_event(
@@ -162,6 +221,7 @@ class IncidentService:
                     note=note,
                 )
             )
+            self._save_incident_to_db(incident)
 
         audit_service.record_event(
             event_type=AuditEventType.INCIDENT_NOTE,

@@ -8,6 +8,11 @@ import json
 import threading
 from typing import Any, Dict, List, Optional
 
+import json
+import threading
+from typing import Any, Dict, List, Optional
+
+from src.database import AuditLogModel, SessionLocal
 from src.models.audit import (
     AuditEventType,
     AuditIntegrityReport,
@@ -21,23 +26,62 @@ class AuditService:
     def __init__(self):
         self._lock = threading.Lock()
         self._ledger: List[AuditLogEntry] = []
-        self._initialize_genesis_entry()
+        self._initialize_ledger()
 
-    def _initialize_genesis_entry(self):
-        """Creates the immutable Genesis block of the audit ledger."""
-        genesis = AuditLogEntry(
-            log_id="GENESIS-BLOCK",
-            timestamp=datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
-            event_type=AuditEventType.INCIDENT_CREATE,
-            actor="SYSTEM_INIT",
-            actor_role="ROOT",
-            target_resource="agentic-sre-platform",
-            action_summary="Audit Ledger Initialized with Cryptographic Chain",
-            details={"platform_version": "0.1.0", "client": "Virtusa"},
-            prev_hash=GENESIS_HASH,
-        )
-        genesis.entry_hash = genesis.compute_hash()
-        self._ledger.append(genesis)
+    def _initialize_ledger(self):
+        """Loads audit ledger from SQLite or initializes the immutable Genesis block."""
+        with SessionLocal() as session:
+            try:
+                db_entries = session.query(AuditLogModel).order_by(AuditLogModel.timestamp.asc()).all()
+                if db_entries:
+                    for row in db_entries:
+                        self._ledger.append(
+                            AuditLogEntry(
+                                log_id=row.log_id,
+                                timestamp=row.timestamp,
+                                event_type=AuditEventType(row.event_type),
+                                actor=row.actor,
+                                actor_role=row.actor_role,
+                                target_resource=row.target_resource,
+                                action_summary=row.action_summary,
+                                details=json.loads(row.details),
+                                prev_hash=row.prev_hash,
+                                entry_hash=row.entry_hash,
+                            )
+                        )
+                else:
+                    genesis = AuditLogEntry(
+                        log_id="GENESIS-BLOCK",
+                        timestamp=datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+                        event_type=AuditEventType.INCIDENT_CREATE,
+                        actor="SYSTEM_INIT",
+                        actor_role="ROOT",
+                        target_resource="agentic-sre-platform",
+                        action_summary="Audit Ledger Initialized with Cryptographic Chain",
+                        details={"platform_version": "0.1.0", "client": "Virtusa"},
+                        prev_hash=GENESIS_HASH,
+                    )
+                    genesis.entry_hash = genesis.compute_hash()
+                    self._ledger.append(genesis)
+                    
+                    # Save genesis block to SQLite
+                    session.add(
+                        AuditLogModel(
+                            log_id=genesis.log_id,
+                            timestamp=genesis.timestamp,
+                            event_type=genesis.event_type.value,
+                            actor=genesis.actor,
+                            actor_role=genesis.actor_role,
+                            target_resource=genesis.target_resource,
+                            action_summary=genesis.action_summary,
+                            details=json.dumps(genesis.details),
+                            prev_hash=genesis.prev_hash,
+                            entry_hash=genesis.entry_hash,
+                        )
+                    )
+                    session.commit()
+            except Exception as e:
+                print(f"[Audit DB Warning] {e}")
 
     def record_event(
         self,
@@ -49,7 +93,8 @@ class AuditService:
         details: Optional[Dict[str, Any]] = None,
     ) -> AuditLogEntry:
         """
-        Appends an event to the ledger, cryptographically binding it to the prior entry.
+        Appends an event to the ledger, cryptographically binding it to the prior entry,
+        and permanently commits it to the SQLite database.
         """
         with self._lock:
             prev_entry = self._ledger[-1]
@@ -64,7 +109,29 @@ class AuditService:
             )
             entry.entry_hash = entry.compute_hash()
             self._ledger.append(entry)
-            return entry
+
+        # Commit to SQLite
+        with SessionLocal() as session:
+            try:
+                session.add(
+                    AuditLogModel(
+                        log_id=entry.log_id,
+                        timestamp=entry.timestamp,
+                        event_type=entry.event_type.value,
+                        actor=entry.actor,
+                        actor_role=entry.actor_role,
+                        target_resource=entry.target_resource,
+                        action_summary=entry.action_summary,
+                        details=json.dumps(entry.details),
+                        prev_hash=entry.prev_hash,
+                        entry_hash=entry.entry_hash,
+                    )
+                )
+                session.commit()
+            except Exception as e:
+                print(f"[Audit DB Save Warning] {e}")
+
+        return entry
 
     def verify_integrity(self) -> AuditIntegrityReport:
         """

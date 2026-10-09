@@ -131,6 +131,26 @@
             Awaiting multi-service telemetry signals for correlation...
           </div>
         </div>
+        <div style="margin-top: 0.75rem; display: flex; justify-content: flex-end;">
+          <button class="btn btn-primary" id="btn-propose-remediation" style="padding: 0.35rem 0.85rem; font-size: 0.78rem;">
+            <span>⚡</span> Formulate & Propose Remediation Plan
+          </button>
+        </div>
+      </div>
+
+      <!-- Sprints 5 & 6: Approval-Gated Remediation Gateway Card -->
+      <div class="card" id="remediation-gateway-card">
+        <div class="card-title-bar">
+          <div class="card-title">
+            <span>🛡</span> Approval-Gated Remediation Gateway
+          </div>
+          <button class="btn btn-secondary" id="btn-refresh-plans" style="padding: 0.25rem 0.6rem; font-size: 0.72rem;">
+            Refresh Plans
+          </button>
+        </div>
+        <div id="remediation-plans-container" style="max-height: 260px; overflow-y: auto;">
+          <!-- Dynamically populated with remediation plans -->
+        </div>
       </div>
     </section>
 

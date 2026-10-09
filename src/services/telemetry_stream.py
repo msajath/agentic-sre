@@ -43,6 +43,12 @@ class TelemetryStream:
         with self._lock:
             self._last_heartbeat[heartbeat.service_name] = heartbeat
 
+    def flush_service_history(self, service_name: str) -> None:
+        """Flushes rolling historical buffer on service restart / recovery."""
+        with self._lock:
+            if service_name in self._history:
+                self._history[service_name].clear()
+
     def get_service_summary(self, service_name: str) -> ServiceMetricsSummary:
         """Computes statistical summary for the service across its current window."""
         with self._lock:

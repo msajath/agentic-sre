@@ -15,6 +15,8 @@ from src.services.audit_service import audit_service, AuditService
 from src.services.incident_service import incident_service, IncidentService
 from src.services.diagnosis_engine import diagnosis_engine, DiagnosisEngine
 from src.services.event_correlator import event_correlator, EventCorrelator
+from src.services.rule_engine import rule_engine, RuleEngine
+from src.services.remediation_engine import remediation_engine, RemediationEngine
 
 __all__ = [
     "topology_engine",
@@ -39,4 +41,8 @@ __all__ = [
     "DiagnosisEngine",
     "event_correlator",
     "EventCorrelator",
+    "rule_engine",
+    "RuleEngine",
+    "remediation_engine",
+    "RemediationEngine",
 ]

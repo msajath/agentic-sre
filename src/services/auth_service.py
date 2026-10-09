@@ -13,6 +13,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 import jwt
 
 from src.config import settings
+from src.database import SessionLocal, UserModel
 from src.models.auth import TokenPayload, TokenResponse, User, UserPublic, UserRole
 
 # HTTP Bearer scheme
@@ -38,7 +39,7 @@ class AuthService:
         return key.hex()
 
     def _seed_default_users(self):
-        """Seeds enterprise user accounts across the 4 RBAC roles."""
+        """Seeds enterprise user accounts into SQLite database if not present."""
         default_accounts = [
             ("admin", "admin@virtusa-sre.com", "AdminSre@2026", UserRole.ADMIN, "Principal SRE Architect"),
             ("lead", "lead@virtusa-sre.com", "LeadSre@2026", UserRole.SRE_LEAD, "SRE Incident Lead"),
@@ -46,18 +47,38 @@ class AuthService:
             ("viewer", "viewer@virtusa-sre.com", "ViewerSre@2026", UserRole.VIEWER, "Executive Observability Viewer"),
         ]
 
-        for username, email, pwd, role, full_name in default_accounts:
-            salt = secrets.token_hex(16)
-            hashed = self._hash_password(pwd, salt)
-            self._users[username] = User(
-                username=username,
-                email=email,
-                role=role,
-                hashed_password=hashed,
-                salt=salt,
-                full_name=full_name,
-                is_active=True,
-            )
+        with SessionLocal() as session:
+            try:
+                existing_count = session.query(UserModel).count()
+                if existing_count == 0:
+                    for username, email, pwd, role, full_name in default_accounts:
+                        salt = secrets.token_hex(16)
+                        hashed = self._hash_password(pwd, salt)
+                        user_model = UserModel(
+                            username=username,
+                            email=email,
+                            role=role.value,
+                            hashed_password=hashed,
+                            salt=salt,
+                            full_name=full_name,
+                            is_active=True,
+                        )
+                        session.add(user_model)
+                    session.commit()
+
+                # Hydrate in-memory cache from database
+                for u in session.query(UserModel).all():
+                    self._users[u.username] = User(
+                        username=u.username,
+                        email=u.email,
+                        role=UserRole(u.role),
+                        hashed_password=u.hashed_password,
+                        salt=u.salt,
+                        full_name=u.full_name,
+                        is_active=u.is_active,
+                    )
+            except Exception as e:
+                print(f"[Auth DB Warning] {e}")
 
     def authenticate_user(self, username: str, password: str) -> Optional[User]:
         """Validates credentials against hashed passwords with constant-time comparison."""
