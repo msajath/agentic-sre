@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agentic SRE Platform - Intelligent Incident Management & Auto-Remediation</title>
+  <link rel="stylesheet" href="/static/css/dashboard.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+  <!-- Header Bar -->
+  <header class="header-bar">
+    <div class="brand-wrapper">
+      <div class="brand-icon">⚡</div>
+      <div>
+        <div class="brand-title">Agentic SRE Command Center</div>
+        <div class="brand-subtitle">Virtusa Enterprise Partner • EC5406 Platform v0.1.0</div>
+      </div>
+    </div>
+    <div class="header-actions">
+      <div class="connection-pill">
+        <span class="connection-dot" id="connection-dot"></span>
+        <span id="connection-status">CONNECTING</span>
+      </div>
+      <button class="btn btn-danger" id="btn-emergency-reset">
+        <span>⚠</span> Reset All Chaos Faults
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Dashboard Grid -->
+  <main class="dashboard-grid">
+    <!-- Left Column: Observability & Topology -->
+    <section>
+      <!-- Incident Alert Banner -->
+      <div class="incident-banner" id="incident-banner">
+        <div class="incident-header">
+          <span class="incident-badge">ACTIVE INCIDENT</span>
+          <span id="incident-title" style="font-weight: 700;"></span>
+        </div>
+        <p id="incident-desc" style="font-size: 0.85rem; margin-bottom: 0.5rem;"></p>
+        <div style="display: flex; gap: 1.5rem; font-size: 0.8rem;">
+          <div><strong>Diagnosed Root Cause:</strong> <span id="incident-root-cause" style="color: #fca5a5; font-family: monospace;"></span></div>
+          <div><strong>Blast Radius:</strong> <span id="incident-blast-radius" style="color: #fef08a; font-family: monospace;"></span></div>
+        </div>
+      </div>
+
+      <!-- Topology Visualizer -->
+      <div class="card">
+        <div class="card-title-bar">
+          <div class="card-title">
+            <span>🌐</span> Service Dependency Topology & Cascade Graph
+          </div>
+          <div style="font-size: 0.75rem; color: var(--text-muted);">
+            Arrows indicate invocation flow (Caller ➔ Callee)
+          </div>
+        </div>
+        <div class="topology-container">
+          <svg class="topology-svg" id="topology-svg" viewBox="0 0 750 300"></svg>
+        </div>
+      </div>
+
+      <!-- Live Service Telemetry Grid -->
+      <div class="card">
+        <div class="card-title-bar">
+          <div class="card-title">
+            <span>📊</span> Monitored Microservice Telemetry
+          </div>
+          <div style="font-size: 0.75rem; color: var(--text-muted);">
+            1-second rolling aggregation
+          </div>
+        </div>
+        <div class="services-grid" id="services-grid">
+          <!-- Dynamically populated via WebSocket -->
+        </div>
+      </div>
+    </section>
+
+    <!-- Right Column: Chaos Injection & Anomaly Stream -->
+    <aside>
+      <!-- Chaos Engineering Console -->
+      <div class="card">
+        <div class="card-title-bar">
+          <div class="card-title">
+            <span>💥</span> Deliberate Failure Injection
+          </div>
+        </div>
+        <form id="chaos-form">
+          <div class="form-group">
+            <label class="form-label" for="fault-service">Target Microservice</label>
+            <select class="form-select" id="fault-service" required>
+              <option value="payment-service">payment-service (Financial Gateway)</option>
+              <option value="order-service">order-service (Core Orchestrator)</option>
+              <option value="inventory-service">inventory-service (Catalog & Stock)</option>
+              <option value="auth-service">auth-service (Security & Tokens)</option>
+              <option value="notification-service">notification-service (Alerts & SMS)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="fault-type">Failure Mode</label>
+            <select class="form-select" id="fault-type" required>
+              <option value="LATENCY">Latency Delay Spike</option>
+              <option value="ERROR_STORM">Error Storm (500 Internal Errors)</option>
+              <option value="SERVICE_CRASH">Complete Service Crash (Outage)</option>
+              <option value="DATABASE_LOCK">Database Lock Contention</option>
+              <option value="RESOURCE_SATURATION">Resource Starvation (CPU/Mem)</option>
+            </select>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+            <div class="form-group">
+              <label class="form-label" for="fault-magnitude">Magnitude (ms / %)</label>
+              <input class="form-input" type="number" id="fault-magnitude" value="1500" min="1" max="10000" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="fault-duration">Duration (Seconds)</label>
+              <input class="form-input" type="number" id="fault-duration" value="30" min="5" max="300" required>
+            </div>
+          </div>
+
+          <button class="btn btn-primary" type="submit" style="width: 100%; justify-content: center; margin-top: 0.5rem;">
+            <span>⚡</span> Inject Controlled Fault
+          </button>
+        </form>
+
+        <div style="margin-top: 1.25rem;">
+          <div style="font-size: 0.8rem; font-weight: 700; color: var(--text-muted); margin-bottom: 0.25rem;">
+            Active Injected Faults
+          </div>
+          <div id="active-faults-list">
+            <!-- Dynamically populated -->
+          </div>
+        </div>
+      </div>
+
+      <!-- Anomaly Stream & Diagnostics -->
+      <div class="card">
+        <div class="card-title-bar">
+          <div class="card-title">
+            <span>🔍</span> Real-Time Anomaly Signals
+          </div>
+        </div>
+        <div class="anomaly-list" id="anomalies-list">
+          <!-- Dynamically populated -->
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <script src="/static/js/dashboard.js"></script>
+</body>
+</html>
