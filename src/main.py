@@ -12,7 +12,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from src.api.auth_router import router as auth_router
 from src.api.chaos_router import router as chaos_router
+from src.api.incident_router import router as incident_router
+from src.api.audit_router import router as audit_router
 from src.api.telemetry_router import router as telemetry_router
 from src.api.topology_router import router as topology_router
 from src.api.ws_router import router as ws_router
@@ -72,9 +75,12 @@ async def add_security_headers(request: Request, call_next):
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # 4. Include API Routers
+app.include_router(auth_router)
 app.include_router(telemetry_router)
+app.include_router(incident_router)
 app.include_router(chaos_router)
 app.include_router(topology_router)
+app.include_router(audit_router)
 app.include_router(ws_router)
 
 

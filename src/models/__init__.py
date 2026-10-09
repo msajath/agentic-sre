@@ -20,8 +20,24 @@ from src.models.topology import (
 from src.models.incident import (
     IncidentSeverity,
     IncidentState,
+    IncidentTimelineEvent,
     AnomalyReport,
     IncidentRecord,
+    IncidentTransitionRequest,
+    IncidentNoteRequest,
+)
+from src.models.auth import (
+    UserRole,
+    User,
+    UserPublic,
+    LoginRequest,
+    TokenResponse,
+    TokenPayload,
+)
+from src.models.audit import (
+    AuditEventType,
+    AuditLogEntry,
+    AuditIntegrityReport,
 )
 
 __all__ = [
@@ -38,6 +54,18 @@ __all__ = [
     "ServiceTopology",
     "IncidentSeverity",
     "IncidentState",
+    "IncidentTimelineEvent",
     "AnomalyReport",
     "IncidentRecord",
+    "IncidentTransitionRequest",
+    "IncidentNoteRequest",
+    "UserRole",
+    "User",
+    "UserPublic",
+    "LoginRequest",
+    "TokenResponse",
+    "TokenPayload",
+    "AuditEventType",
+    "AuditLogEntry",
+    "AuditIntegrityReport",
 ]

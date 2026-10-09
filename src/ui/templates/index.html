@@ -16,14 +16,33 @@
       <div class="brand-icon">⚡</div>
       <div>
         <div class="brand-title">Agentic SRE Command Center</div>
-        <div class="brand-subtitle">Virtusa Enterprise Partner • EC5406 Platform v0.1.0</div>
+        <div class="brand-subtitle">Virtusa Enterprise Partner • EC5406 Platform v0.2.0 (Sprint 2)</div>
       </div>
     </div>
     <div class="header-actions">
+      <!-- RBAC User Role Switcher -->
+      <div style="display: flex; align-items: center; gap: 0.5rem; background: rgba(255,255,255,0.05); padding: 0.25rem 0.6rem; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
+        <span style="font-size: 0.75rem; color: var(--text-muted);">Role:</span>
+        <select id="user-role-select" class="form-select" style="padding: 0.2rem 0.5rem; font-size: 0.75rem; width: auto; background: transparent; border: none; font-weight: 700; color: #a5b4fc;">
+          <option value="admin">admin (ADMIN)</option>
+          <option value="lead">lead (SRE_LEAD)</option>
+          <option value="operator" selected>operator (OPERATOR)</option>
+          <option value="viewer">viewer (VIEWER)</option>
+        </select>
+      </div>
+
+      <!-- Audit Integrity Pill -->
+      <div class="connection-pill" id="audit-pill" style="cursor: pointer;" title="Click to verify SHA-256 chain">
+        <span class="connection-dot" style="background-color: var(--status-healthy); box-shadow: 0 0 8px var(--status-healthy);"></span>
+        <span id="audit-status">LEDGER VERIFIED</span>
+      </div>
+
+      <!-- Connection Pill -->
       <div class="connection-pill">
         <span class="connection-dot" id="connection-dot"></span>
         <span id="connection-status">CONNECTING</span>
       </div>
+
       <button class="btn btn-danger" id="btn-emergency-reset">
         <span>⚠</span> Reset All Chaos Faults
       </button>
@@ -37,13 +56,18 @@
       <!-- Incident Alert Banner -->
       <div class="incident-banner" id="incident-banner">
         <div class="incident-header">
-          <span class="incident-badge">ACTIVE INCIDENT</span>
+          <span class="incident-badge">CORRELATED INCIDENT CANDIDATE</span>
           <span id="incident-title" style="font-weight: 700;"></span>
         </div>
         <p id="incident-desc" style="font-size: 0.85rem; margin-bottom: 0.5rem;"></p>
-        <div style="display: flex; gap: 1.5rem; font-size: 0.8rem;">
+        <div style="display: flex; gap: 1.5rem; font-size: 0.8rem; margin-bottom: 0.5rem;">
           <div><strong>Diagnosed Root Cause:</strong> <span id="incident-root-cause" style="color: #fca5a5; font-family: monospace;"></span></div>
           <div><strong>Blast Radius:</strong> <span id="incident-blast-radius" style="color: #fef08a; font-family: monospace;"></span></div>
+        </div>
+        <div style="display: flex; justify-content: flex-end;">
+          <button class="btn btn-primary" id="btn-escalate-incident" style="padding: 0.3rem 0.8rem; font-size: 0.75rem;">
+            <span>📑</span> Track in Incident Catalog
+          </button>
         </div>
       </div>
 
@@ -76,9 +100,24 @@
           <!-- Dynamically populated via WebSocket -->
         </div>
       </div>
+
+      <!-- Sprint 2: Incident Lifecycle Management Center -->
+      <div class="card">
+        <div class="card-title-bar">
+          <div class="card-title">
+            <span>📋</span> Incident Lifecycle & Triage Center
+          </div>
+          <button class="btn btn-secondary" id="btn-refresh-incidents" style="padding: 0.25rem 0.6rem; font-size: 0.75rem;">
+            Refresh
+          </button>
+        </div>
+        <div id="incidents-container" style="max-height: 280px; overflow-y: auto;">
+          <!-- Dynamically populated with incidents -->
+        </div>
+      </div>
     </section>
 
-    <!-- Right Column: Chaos Injection & Anomaly Stream -->
+    <!-- Right Column: Chaos Injection, Audit Log, and Anomaly Stream -->
     <aside>
       <!-- Chaos Engineering Console -->
       <div class="card">
@@ -136,7 +175,7 @@
         </div>
       </div>
 
-      <!-- Anomaly Stream & Diagnostics -->
+      <!-- Real-Time Anomaly Stream -->
       <div class="card">
         <div class="card-title-bar">
           <div class="card-title">
@@ -144,6 +183,21 @@
           </div>
         </div>
         <div class="anomaly-list" id="anomalies-list">
+          <!-- Dynamically populated -->
+        </div>
+      </div>
+
+      <!-- Sprint 2: Cryptographic Audit Ledger -->
+      <div class="card">
+        <div class="card-title-bar">
+          <div class="card-title">
+            <span>⛓</span> Immutable Audit Ledger (SHA-256)
+          </div>
+          <button class="btn btn-secondary" id="btn-verify-audit" style="padding: 0.25rem 0.6rem; font-size: 0.72rem;">
+            Verify Chain
+          </button>
+        </div>
+        <div id="audit-ledger-container" style="max-height: 240px; overflow-y: auto; font-family: monospace; font-size: 0.72rem;">
           <!-- Dynamically populated -->
         </div>
       </div>

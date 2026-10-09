@@ -1,5 +1,5 @@
 /**
- * Agentic SRE Platform - Real-time Dashboard Controller
+ * Agentic SRE Platform - Real-time Dashboard Controller (Sprint 2)
  */
 
 const nodePositions = {
@@ -10,8 +10,48 @@ const nodePositions = {
   "notification-service": { x: 620, y: 150 }
 };
 
+const userCredentials = {
+  admin: "AdminSre@2026",
+  lead: "LeadSre@2026",
+  operator: "OperatorSre@2026",
+  viewer: "ViewerSre@2026"
+};
+
+let currentToken = null;
+let currentRole = "operator";
 let ws = null;
 let reconnectTimer = null;
+let currentIncidentCandidate = null;
+
+// Authenticate and acquire scoped JWT
+async function authenticate(username = "operator") {
+  const password = userCredentials[username] || "OperatorSre@2026";
+  try {
+    const res = await fetch("/api/v1/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      currentToken = data.access_token;
+      currentRole = data.role;
+      console.log(`[Auth] Switched identity to: ${username} (${currentRole})`);
+      fetchIncidents();
+      fetchAuditLogs();
+    }
+  } catch (err) {
+    console.error("[Auth] Login error:", err);
+  }
+}
+
+function getAuthHeaders() {
+  const headers = { "Content-Type": "application/json" };
+  if (currentToken) {
+    headers["Authorization"] = `Bearer ${currentToken}`;
+  }
+  return headers;
+}
 
 function initWebSocket() {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -51,6 +91,7 @@ function initWebSocket() {
 }
 
 function updateDashboard(data) {
+  currentIncidentCandidate = data.incident;
   renderServicesGrid(data.services);
   renderActiveFaults(data.active_faults);
   renderIncidentBanner(data.incident, data.anomalies);
@@ -177,7 +218,6 @@ function renderTopologySVG(services, edges) {
     </filter>
   </defs>`;
 
-  // Draw Edges
   edges.forEach(e => {
     const src = nodePositions[e.source];
     const tgt = nodePositions[e.target];
@@ -189,7 +229,6 @@ function renderTopologySVG(services, edges) {
     }
   });
 
-  // Draw Nodes
   Object.keys(nodePositions).forEach(svcName => {
     const pos = nodePositions[svcName];
     const status = statusMap[svcName] || "HEALTHY";
@@ -221,6 +260,150 @@ function renderTopologySVG(services, edges) {
   svg.innerHTML = html;
 }
 
+// Sprint 2: Incidents Management
+async function fetchIncidents() {
+  const container = document.getElementById("incidents-container");
+  if (!container) return;
+
+  try {
+    const res = await fetch("/api/v1/incidents");
+    if (!res.ok) return;
+    const incidents = await res.json();
+
+    if (incidents.length === 0) {
+      container.innerHTML = `<div style="font-size: 0.8rem; color: var(--text-dim); padding: 0.5rem 0;">No recorded incidents in catalog.</div>`;
+      return;
+    }
+
+    container.innerHTML = incidents.map(inc => {
+      let actionsHtml = '';
+      if (inc.state === "DETECTED") {
+        actionsHtml = `<button class="btn btn-secondary" style="padding: 0.15rem 0.5rem; font-size: 0.7rem;" onclick="transitionIncident('${inc.incident_id}', 'ACKNOWLEDGED')">Acknowledge</button>`;
+      } else if (inc.state === "ACKNOWLEDGED") {
+        actionsHtml = `<button class="btn btn-secondary" style="padding: 0.15rem 0.5rem; font-size: 0.7rem;" onclick="transitionIncident('${inc.incident_id}', 'INVESTIGATING')">Investigate</button>`;
+      } else if (inc.state === "INVESTIGATING") {
+        actionsHtml = `<button class="btn btn-primary" style="padding: 0.15rem 0.5rem; font-size: 0.7rem;" onclick="transitionIncident('${inc.incident_id}', 'RESOLVED')">Resolve</button>`;
+      }
+
+      return `
+        <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 0.75rem; margin-bottom: 0.5rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+              <span style="font-weight: 700; color: #a5b4fc; font-size: 0.85rem;">${inc.incident_id}</span>
+              <span style="font-size: 0.8rem; margin-left: 0.5rem;">${inc.title}</span>
+            </div>
+            <span class="status-badge badge-${inc.state === 'RESOLVED' ? 'HEALTHY' : 'CRITICAL'}">${inc.state}</span>
+          </div>
+          <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.3rem;">
+            Root Cause: <strong>${inc.root_cause_service || 'N/A'}</strong> | Blast: ${(inc.affected_services || []).join(', ')}
+          </div>
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.5rem;">
+            <div style="font-size: 0.7rem; color: var(--text-dim);">Updated: ${new Date(inc.updated_at).toLocaleTimeString()}</div>
+            <div style="display: flex; gap: 0.4rem;">${actionsHtml}</div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch (err) {
+    console.error("Fetch incidents failed:", err);
+  }
+}
+
+async function transitionIncident(incidentId, targetState) {
+  const reason = prompt(`Enter reason for transitioning ${incidentId} to ${targetState}:`, `SRE operator triaged incident`);
+  if (!reason) return;
+
+  try {
+    const res = await fetch(`/api/v1/incidents/${incidentId}/state`, {
+      method: "PATCH",
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ target_state: targetState, reason })
+    });
+    if (res.ok) {
+      fetchIncidents();
+      fetchAuditLogs();
+    } else {
+      const err = await res.json();
+      alert(`Transition rejected: ${err.detail}`);
+    }
+  } catch (err) {
+    console.error("Transition failed:", err);
+  }
+}
+
+async function escalateActiveIncident() {
+  if (!currentIncidentCandidate) {
+    alert("No active incident candidate currently detected.");
+    return;
+  }
+
+  try {
+    const url = `/api/v1/incidents?title=${encodeURIComponent(currentIncidentCandidate.title)}&description=${encodeURIComponent(currentIncidentCandidate.description)}&severity=${currentIncidentCandidate.severity}&root_cause_service=${encodeURIComponent(currentIncidentCandidate.root_cause_service || '')}`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: getAuthHeaders()
+    });
+    if (res.ok) {
+      alert("Incident successfully logged in persistent catalog!");
+      fetchIncidents();
+      fetchAuditLogs();
+    } else {
+      const err = await res.json();
+      alert(`Escalation failed: ${err.detail}`);
+    }
+  } catch (err) {
+    console.error("Escalate failed:", err);
+  }
+}
+
+// Sprint 2: Cryptographic Audit Ledger
+async function fetchAuditLogs() {
+  const container = document.getElementById("audit-ledger-container");
+  if (!container) return;
+
+  try {
+    const res = await fetch("/api/v1/audit/logs?limit=15");
+    if (!res.ok) return;
+    const logs = await res.json();
+
+    container.innerHTML = logs.map(l => `
+      <div style="padding: 0.4rem 0.5rem; border-bottom: 1px solid rgba(255,255,255,0.05);">
+        <div style="display: flex; justify-content: space-between; color: var(--text-muted);">
+          <span>${l.actor} [${l.actor_role}]</span>
+          <span>${new Date(l.timestamp).toLocaleTimeString()}</span>
+        </div>
+        <div style="color: var(--text-main); font-weight: 600; margin: 0.15rem 0;">${l.action_summary}</div>
+        <div style="color: #6366f1; font-size: 0.65rem; word-break: break-all;">
+          🔗 ${l.entry_hash.substring(0, 24)}...
+        </div>
+      </div>
+    `).join('');
+  } catch (err) {
+    console.error("Fetch audit logs failed:", err);
+  }
+}
+
+async function verifyAuditChain() {
+  try {
+    const res = await fetch("/api/v1/audit/verify");
+    if (res.ok) {
+      const report = await res.json();
+      const statusEl = document.getElementById("audit-status");
+      if (report.is_valid) {
+        statusEl.innerText = `LEDGER VERIFIED (${report.total_entries} BLOCKS)`;
+        statusEl.style.color = "var(--status-healthy)";
+        alert(`Cryptographic Verification Succeeded:\n• Valid: ${report.is_valid}\n• Total Blocks: ${report.total_entries}\n• Genesis Verified: ${report.genesis_verified}\n• Message: ${report.message}`);
+      } else {
+        statusEl.innerText = "CHAIN TAMPERED";
+        statusEl.style.color = "var(--status-critical)";
+        alert(`WARNING: Tampering Detected in block ${report.tampered_entry_id}!`);
+      }
+    }
+  } catch (err) {
+    console.error("Verify audit chain failed:", err);
+  }
+}
+
 // Inject Chaos Fault
 async function handleInjectFault(e) {
   e.preventDefault();
@@ -238,12 +421,14 @@ async function handleInjectFault(e) {
         fault_type,
         magnitude,
         duration_sec,
-        injected_by: "sre-operator"
+        injected_by: `sre-${currentRole.toLowerCase()}`
       })
     });
     if (!resp.ok) {
       const err = await resp.json();
       alert(`Fault injection failed: ${err.detail}`);
+    } else {
+      fetchAuditLogs();
     }
   } catch (err) {
     console.error("Fault injection request failed:", err);
@@ -255,6 +440,7 @@ async function clearFault(serviceName, faultType) {
     await fetch(`/api/v1/chaos/faults/${serviceName}?fault_type=${faultType}`, {
       method: "DELETE"
     });
+    fetchAuditLogs();
   } catch (err) {
     console.error("Clear fault error:", err);
   }
@@ -264,6 +450,7 @@ async function emergencyReset() {
   if (confirm("Reset and clear all active faults across the cluster?")) {
     try {
       await fetch("/api/v1/chaos/reset", { method: "POST" });
+      fetchAuditLogs();
     } catch (err) {
       console.error("Emergency reset error:", err);
     }
@@ -271,9 +458,31 @@ async function emergencyReset() {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  authenticate("operator");
   initWebSocket();
+
   const form = document.getElementById("chaos-form");
   if (form) form.addEventListener("submit", handleInjectFault);
+  
   const resetBtn = document.getElementById("btn-emergency-reset");
   if (resetBtn) resetBtn.addEventListener("click", emergencyReset);
+
+  const roleSelect = document.getElementById("user-role-select");
+  if (roleSelect) {
+    roleSelect.addEventListener("change", (e) => {
+      authenticate(e.target.value);
+    });
+  }
+
+  const escalateBtn = document.getElementById("btn-escalate-incident");
+  if (escalateBtn) escalateBtn.addEventListener("click", escalateActiveIncident);
+
+  const refreshIncBtn = document.getElementById("btn-refresh-incidents");
+  if (refreshIncBtn) refreshIncBtn.addEventListener("click", fetchIncidents);
+
+  const verifyAuditBtn = document.getElementById("btn-verify-audit");
+  if (verifyAuditBtn) verifyAuditBtn.addEventListener("click", verifyAuditChain);
+
+  const auditPill = document.getElementById("audit-pill");
+  if (auditPill) auditPill.addEventListener("click", verifyAuditChain);
 });

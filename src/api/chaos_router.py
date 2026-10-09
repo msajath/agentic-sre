@@ -6,7 +6,9 @@ Guarantees strictly validated fault parameters to prevent malicious degradation.
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Query, status
 
+from src.models.audit import AuditEventType
 from src.models.chaos import ActiveFault, ChaosInjectionRequest, FaultType
+from src.services.audit_service import audit_service
 from src.services.chaos_controller import chaos_controller
 
 router = APIRouter(prefix="/api/v1/chaos", tags=["Chaos Fault Injection"])
@@ -20,6 +22,18 @@ async def inject_fault(request: ChaosInjectionRequest):
     """
     try:
         fault = chaos_controller.inject_fault(request)
+        audit_service.record_event(
+            event_type=AuditEventType.CHAOS_INJECT,
+            actor=request.injected_by,
+            actor_role="SRE_OPERATOR",
+            target_resource=request.service_name,
+            action_summary=f"Chaos fault {request.fault_type.value} injected into {request.service_name}",
+            details={
+                "magnitude": request.magnitude,
+                "duration_sec": request.duration_sec,
+                "fault_id": fault.fault_id,
+            },
+        )
         return fault
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
@@ -42,6 +56,14 @@ async def clear_service_faults(
     Manually removes injected faults from a service.
     """
     cleared = chaos_controller.remove_fault(service_name.lower(), fault_type=fault_type)
+    audit_service.record_event(
+        event_type=AuditEventType.CHAOS_CLEAR,
+        actor="sre-operator",
+        actor_role="SRE_OPERATOR",
+        target_resource=service_name,
+        action_summary=f"Cleared {len(cleared)} active faults on {service_name}",
+        details={"cleared_fault_ids": cleared},
+    )
     return {
         "status": "cleared",
         "service_name": service_name,
@@ -56,4 +78,13 @@ async def emergency_clear_all():
     Emergency kill-switch: Clears all active faults immediately.
     """
     cleared_count = chaos_controller.clear_all_faults()
+    audit_service.record_event(
+        event_type=AuditEventType.CHAOS_RESET,
+        actor="sre-operator",
+        actor_role="SRE_OPERATOR",
+        target_resource="cluster-all",
+        action_summary=f"Emergency reset triggered: {cleared_count} faults cleared",
+        details={"cleared_count": cleared_count},
+    )
     return {"status": "all_faults_cleared", "count": cleared_count}
+
