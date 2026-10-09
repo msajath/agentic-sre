@@ -43,6 +43,9 @@ class IncidentService:
             try:
                 for row in session.query(IncidentModel).all():
                     timeline_events = [IncidentTimelineEvent(**e) for e in json.loads(row.timeline)]
+                    created_at = row.created_at.replace(tzinfo=timezone.utc) if row.created_at and row.created_at.tzinfo is None else row.created_at
+                    updated_at = row.updated_at.replace(tzinfo=timezone.utc) if row.updated_at and row.updated_at.tzinfo is None else row.updated_at
+                    resolved_at = row.resolved_at.replace(tzinfo=timezone.utc) if row.resolved_at and row.resolved_at.tzinfo is None else row.resolved_at
                     self._incidents[row.incident_id] = IncidentRecord(
                         incident_id=row.incident_id,
                         title=row.title,
@@ -52,9 +55,9 @@ class IncidentService:
                         root_cause_service=row.root_cause_service,
                         affected_services=json.loads(row.affected_services),
                         timeline=timeline_events,
-                        created_at=row.created_at,
-                        updated_at=row.updated_at,
-                        resolved_at=row.resolved_at,
+                        created_at=created_at,
+                        updated_at=updated_at,
+                        resolved_at=resolved_at,
                     )
             except Exception as e:
                 print(f"[Incident DB Hydration Warning] {e}")
@@ -260,7 +263,13 @@ class IncidentService:
             ]
 
         # Return sorted by updated_at desc
-        return sorted(incidents, key=lambda i: i.updated_at, reverse=True)
+        def get_sort_key(inc):
+            dt = inc.updated_at
+            if dt and dt.tzinfo is None:
+                return dt.replace(tzinfo=timezone.utc)
+            return dt or datetime.min.replace(tzinfo=timezone.utc)
+
+        return sorted(incidents, key=get_sort_key, reverse=True)
 
 
 incident_service = IncidentService()

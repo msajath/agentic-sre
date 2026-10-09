@@ -29,7 +29,7 @@ from sqlalchemy.orm import declarative_base, sessionmaker, Session
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = DATA_DIR / "sre_platform.db"
-DATABASE_URL = f"sqlite:///{DB_PATH}"
+DATABASE_URL = os.getenv("DATABASE_URL") or f"sqlite:///{DB_PATH}"
 
 # SQLAlchemy Engine
 engine = create_engine(

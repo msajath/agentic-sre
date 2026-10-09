@@ -258,6 +258,51 @@ function renderAnomaliesList(anomalies) {
   `).join('');
 }
 
+function renderDiagnosisReport(diag) {
+  const container = document.getElementById("diagnosis-content");
+  const badge = document.getElementById("rca-confidence-badge");
+  if (!container || !badge) return;
+
+  if (!diag) {
+    badge.className = "status-badge badge-HEALTHY";
+    badge.innerText = "STANDBY";
+    container.innerHTML = `
+      <div style="font-size: 0.8rem; color: var(--text-dim); padding: 0.5rem 0;">
+        Awaiting multi-service telemetry signals for correlation...
+      </div>
+    `;
+    return;
+  }
+
+  const confidencePct = Math.round(diag.confidence_score * 100);
+  badge.className = "status-badge badge-CRITICAL";
+  badge.innerText = `${confidencePct}% CONFIDENCE`;
+
+  container.innerHTML = `
+    <div style="background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: var(--radius-sm); padding: 0.75rem; margin-bottom: 0.5rem;">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <span style="font-weight: 800; color: #fca5a5; font-size: 0.9rem;">
+          🎯 Root Cause: ${diag.root_cause_service}
+        </span>
+        <span style="font-size: 0.72rem; color: #f87171; font-family: monospace;">
+          Cascade Delay: ${diag.evidence ? diag.evidence.cascade_delay_ms.toFixed(1) : '0'}ms
+        </span>
+      </div>
+      <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.3rem;">
+        <strong>Causal Path:</strong> ${(diag.evidence && diag.evidence.causal_path ? diag.evidence.causal_path.join(' ➔ ') : diag.root_cause_service)}
+      </div>
+      <div style="font-size: 0.72rem; color: #fef08a; margin-top: 0.3rem;">
+        <strong>Cascading Symptoms:</strong> ${(diag.cascading_symptoms || []).join(', ') || 'None'}
+      </div>
+      ${diag.recommended_remediation_intent ? `
+        <div style="font-size: 0.72rem; color: #a5b4fc; margin-top: 0.4rem; padding-top: 0.3rem; border-top: 1px solid rgba(255,255,255,0.06);">
+          <strong>Remediation Strategy:</strong> ${diag.recommended_remediation_intent}
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
 function renderTopologySVG(services, edges) {
   const svg = document.getElementById("topology-svg");
   if (!svg) return;
@@ -656,9 +701,171 @@ async function rejectPlan(planId) {
   }
 }
 
+// Agentic AI SRE Assistant Controller
+async function fetchAiStatus() {
+  const modelBadge = document.getElementById("ai-model-badge");
+  const statusBadge = document.getElementById("ai-status-badge");
+  if (!modelBadge || !statusBadge) return;
+
+  try {
+    const res = await fetch("/api/v1/ai/status");
+    if (res.ok) {
+      const data = await res.json();
+      modelBadge.innerText = data.engine;
+      statusBadge.innerText = data.status.toUpperCase();
+      statusBadge.className = "status-badge badge-HEALTHY";
+    }
+  } catch (err) {
+    console.warn("AI status check warning:", err);
+  }
+}
+
+async function runAiDiagnosis() {
+  const container = document.getElementById("ai-reasoning-container");
+  const triggerBtn = document.getElementById("btn-trigger-ai");
+  const statusBadge = document.getElementById("ai-status-badge");
+  if (!container) return;
+
+  const incId = (currentIncidentCandidate && currentIncidentCandidate.incident_id) || `INC-${Date.now().toString().slice(-4)}`;
+
+  if (triggerBtn) {
+    triggerBtn.disabled = true;
+    triggerBtn.innerHTML = `<span>⏳</span> Synthesizing...`;
+  }
+  if (statusBadge) {
+    statusBadge.className = "status-badge badge-DEGRADED";
+    statusBadge.innerText = "SYNTHESIZING";
+  }
+
+  container.innerHTML = `
+    <div style="padding: 1rem; text-align: center; color: #c4b5fd; font-size: 0.82rem;">
+      <div style="font-size: 1.2rem; margin-bottom: 0.4rem;">⚙️</div>
+      <div>Multi-agent synthesis in progress: traversing topology DAG and correlating anomalies...</div>
+    </div>
+  `;
+
+  try {
+    const res = await fetch(`/api/v1/ai/analyze-incident/${incId}`, {
+      method: "POST",
+      headers: getAuthHeaders()
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      renderAiHypothesis(data, incId);
+    } else {
+      const err = await res.json();
+      container.innerHTML = `<div style="color: #f87171; font-size: 0.8rem; padding: 0.5rem;">AI Reasoning failed: ${err.detail}</div>`;
+    }
+  } catch (err) {
+    console.error("AI diagnosis error:", err);
+    container.innerHTML = `<div style="color: #f87171; font-size: 0.8rem; padding: 0.5rem;">AI Reasoning error: ${err.message}</div>`;
+  } finally {
+    if (triggerBtn) {
+      triggerBtn.disabled = false;
+      triggerBtn.innerHTML = `<span>⚡</span> Run AI Diagnosis`;
+    }
+    if (statusBadge) {
+      statusBadge.className = "status-badge badge-HEALTHY";
+      statusBadge.innerText = "OPERATIONAL";
+    }
+  }
+}
+
+function renderAiHypothesis(data, incId) {
+  const container = document.getElementById("ai-reasoning-container");
+  if (!container) return;
+
+  const explanationParts = (data.explanation || "").split("; ");
+  const confidencePct = Math.round((data.confidence || 0.95) * 100);
+
+  container.innerHTML = `
+    <div style="background: rgba(139, 92, 246, 0.08); border: 1px solid rgba(139, 92, 246, 0.25); border-radius: var(--radius-sm); padding: 0.85rem;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.6rem;">
+        <div>
+          <span style="font-size: 0.75rem; color: #a78bfa; text-transform: uppercase; font-weight: 700;">Root Cause Hypothesis</span>
+          <div style="font-size: 1rem; font-weight: 800; color: #ede9fe; font-family: monospace;">
+            🎯 ${data.root_cause_service}
+          </div>
+        </div>
+        <div style="text-align: right;">
+          <span style="background: rgba(139, 92, 246, 0.2); color: #c4b5fd; font-weight: 700; font-size: 0.75rem; padding: 0.2rem 0.5rem; border-radius: 9999px; border: 1px solid rgba(139, 92, 246, 0.4);">
+            ${confidencePct}% AI Confidence
+          </span>
+          <div style="font-size: 0.7rem; color: var(--text-dim); margin-top: 0.2rem;">Blast Radius: ${(data.blast_radius || []).join(', ') || 'Isolated'}</div>
+        </div>
+      </div>
+
+      <!-- Chain-of-Thought Trace -->
+      <div style="margin-bottom: 0.75rem;">
+        <div style="font-size: 0.72rem; color: #a78bfa; font-weight: 700; margin-bottom: 0.3rem;">
+          🧠 Chain-of-Thought Reasoning Trace:
+        </div>
+        <div style="background: rgba(0, 0, 0, 0.35); border-radius: var(--radius-sm); padding: 0.5rem; font-family: monospace; font-size: 0.72rem; line-height: 1.45; color: #cbd5e1; max-height: 120px; overflow-y: auto;">
+          ${explanationParts.map(step => `
+            <div style="padding: 0.2rem 0; border-bottom: 1px solid rgba(255,255,255,0.04);">
+              <span style="color: #818cf8;">▶</span> ${step}
+            </div>
+          `).join('')}
+        </div>
+      </div>
+
+      <!-- Mitigation Checklist -->
+      <div style="margin-bottom: 0.75rem;">
+        <div style="font-size: 0.72rem; color: #a78bfa; font-weight: 700; margin-bottom: 0.3rem;">
+          📋 Synthesized Mitigation Procedure:
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 0.3rem;">
+          ${(data.mitigation_steps || []).map(step => `
+            <div style="font-size: 0.74rem; color: #94a3b8; display: flex; align-items: flex-start; gap: 0.4rem;">
+              <span style="color: #4ade80;">✓</span> <span>${step}</span>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+
+      <!-- Remediation Propose Action -->
+      <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid rgba(139, 92, 246, 0.2); padding-top: 0.5rem; margin-top: 0.5rem;">
+        <span style="font-size: 0.75rem; color: #e2e8f0;">
+          Recommended Action: <strong style="color: #a5b4fc;">${data.recommended_action}</strong>
+        </span>
+        <button class="btn btn-primary" style="padding: 0.3rem 0.75rem; font-size: 0.75rem; background: linear-gradient(135deg, #4f46e5, #06b6d4); border: none;" onclick="proposeSpecificPlan('${data.root_cause_service}', '${data.recommended_action}', '${incId}')">
+          <span>⚡</span> Propose AI Plan
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+async function proposeSpecificPlan(serviceName, actionType, incId) {
+  try {
+    const res = await fetch("/api/v1/remediation/propose", {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        incident_id: incId,
+        target_service: serviceName,
+        action_type: actionType,
+        parameters: { reason: "Formulated by Agentic AI Reasoning Orchestrator" }
+      })
+    });
+    if (res.ok) {
+      alert(`AI-recommended remediation plan [${actionType} on ${serviceName}] proposed!\nAwaiting SRE Lead approval.`);
+      fetchRemediationPlans();
+      fetchAuditLogs();
+    } else {
+      const err = await res.json();
+      alert(`Proposal failed: ${err.detail}`);
+    }
+  } catch (err) {
+    console.error("Propose plan error:", err);
+  }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   authenticate("operator");
   initWebSocket();
+  fetchAiStatus();
 
   const form = document.getElementById("chaos-form");
   if (form) form.addEventListener("submit", handleInjectFault);
@@ -690,5 +897,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const refreshPlansBtn = document.getElementById("btn-refresh-plans");
   if (refreshPlansBtn) refreshPlansBtn.addEventListener("click", fetchRemediationPlans);
+
+  const triggerAiBtn = document.getElementById("btn-trigger-ai");
+  if (triggerAiBtn) triggerAiBtn.addEventListener("click", runAiDiagnosis);
 });
 

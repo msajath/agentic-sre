@@ -3,7 +3,9 @@ Unit & Cryptographic Security Tests for Immutable Audit Ledger.
 """
 
 from src.models.audit import AuditEventType
-from src.services.audit_service import audit_service
+from src.services.audit_service import AuditService
+
+audit_service = AuditService(persist_db=False)
 
 
 def test_audit_event_recording():

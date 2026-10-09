@@ -138,6 +138,36 @@
         </div>
       </div>
 
+      <!-- Agentic AI SRE Reasoning Assistant Card -->
+      <div class="card" id="ai-agent-card" style="border-left: 4px solid #8b5cf6; background: linear-gradient(180deg, rgba(139, 92, 246, 0.04) 0%, rgba(30, 41, 59, 0.5) 100%);">
+        <div class="card-title-bar">
+          <div class="card-title" style="color: #c4b5fd;">
+            <span>🤖</span> Agentic AI SRE Assistant (LangGraph & CoT Synthesizer)
+          </div>
+          <div style="display: flex; gap: 0.5rem; align-items: center;">
+            <span id="ai-model-badge" style="font-size: 0.7rem; color: #a78bfa; background: rgba(139, 92, 246, 0.15); border: 1px solid rgba(139, 92, 246, 0.3); padding: 0.15rem 0.5rem; border-radius: 9999px;">
+              LangGraph + LLM
+            </span>
+            <span id="ai-status-badge" class="status-badge badge-HEALTHY" style="font-size: 0.72rem;">
+              OPERATIONAL
+            </span>
+          </div>
+        </div>
+        
+        <div style="font-size: 0.75rem; color: var(--text-dim); margin-bottom: 0.6rem; display: flex; justify-content: space-between; align-items: center;">
+          <span>Autonomous multi-agent telemetry synthesis & causal inference</span>
+          <button class="btn btn-primary" id="btn-trigger-ai" style="padding: 0.25rem 0.65rem; font-size: 0.72rem; background: linear-gradient(135deg, #7c3aed, #4f46e5); border: none;">
+            <span>⚡</span> Run AI Diagnosis
+          </button>
+        </div>
+
+        <div id="ai-reasoning-container">
+          <div style="font-size: 0.8rem; color: var(--text-dim); padding: 0.6rem; background: rgba(0,0,0,0.2); border-radius: var(--radius-sm); border: 1px dashed rgba(255,255,255,0.1);">
+            Awaiting incident trigger. Click <strong>"Run AI Diagnosis"</strong> or inject chaos to synthesize multi-agent reasoning trace.
+          </div>
+        </div>
+      </div>
+
       <!-- Sprints 5 & 6: Approval-Gated Remediation Gateway Card -->
       <div class="card" id="remediation-gateway-card">
         <div class="card-title-bar">

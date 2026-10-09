@@ -35,6 +35,9 @@ class RemediationEngine:
         with SessionLocal() as session:
             try:
                 for row in session.query(RemediationPlanModel).all():
+                    created_at = row.created_at.replace(tzinfo=timezone.utc) if row.created_at and row.created_at.tzinfo is None else row.created_at
+                    executed_at = row.executed_at.replace(tzinfo=timezone.utc) if row.executed_at and row.executed_at.tzinfo is None else row.executed_at
+                    verified_at = row.verified_at.replace(tzinfo=timezone.utc) if row.verified_at and row.verified_at.tzinfo is None else row.verified_at
                     self._plans[row.plan_id] = RemediationPlan(
                         plan_id=row.plan_id,
                         incident_id=row.incident_id,
@@ -47,9 +50,9 @@ class RemediationEngine:
                         rejected_by=row.rejected_by,
                         rejection_reason=row.rejection_reason,
                         safety_blast_radius=json.loads(row.safety_blast_radius),
-                        created_at=row.created_at,
-                        executed_at=row.executed_at,
-                        verified_at=row.verified_at,
+                        created_at=created_at,
+                        executed_at=executed_at,
+                        verified_at=verified_at,
                         recovery_verification_notes=row.recovery_verification_notes,
                     )
             except Exception as e:
@@ -308,7 +311,13 @@ class RemediationEngine:
         if state:
             plans = [p for p in plans if p.state == state]
 
-        return sorted(plans, key=lambda p: p.created_at, reverse=True)
+        def get_sort_key(p):
+            dt = p.created_at
+            if dt and dt.tzinfo is None:
+                return dt.replace(tzinfo=timezone.utc)
+            return dt or datetime.min.replace(tzinfo=timezone.utc)
+
+        return sorted(plans, key=get_sort_key, reverse=True)
 
 
 remediation_engine = RemediationEngine()
