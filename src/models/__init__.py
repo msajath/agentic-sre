@@ -39,6 +39,13 @@ from src.models.audit import (
     AuditLogEntry,
     AuditIntegrityReport,
 )
+from src.models.correlation import (
+    AlertEvent,
+    CausalHop,
+    ForensicEvidence,
+    DiagnosticReport,
+    CorrelatedIncidentGroup,
+)
 
 __all__ = [
     "ServiceStatus",
@@ -68,4 +75,9 @@ __all__ = [
     "AuditEventType",
     "AuditLogEntry",
     "AuditIntegrityReport",
+    "AlertEvent",
+    "CausalHop",
+    "ForensicEvidence",
+    "DiagnosticReport",
+    "CorrelatedIncidentGroup",
 ]

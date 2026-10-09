@@ -9,6 +9,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from src.services.anomaly_detector import anomaly_detector
 from src.services.chaos_controller import chaos_controller
+from src.services.event_correlator import event_correlator
 from src.services.telemetry_stream import telemetry_stream
 from src.services.topology_graph import topology_engine
 
@@ -34,7 +35,12 @@ async def websocket_dashboard_endpoint(websocket: WebSocket):
             incident = anomaly_detector.identify_potential_incident()
             incident_data = incident.model_dump(mode="json") if incident else None
 
-            # 4. Topology nodes
+            # 4. Correlation groups and forensic diagnosis
+            corr_groups = event_correlator.correlate_active_alerts()
+            groups_data = [g.model_dump(mode="json") for g in corr_groups]
+            primary_diagnosis = corr_groups[0].diagnosis.model_dump(mode="json") if corr_groups else None
+
+            # 5. Topology nodes
             topo = topology_engine.get_topology()
             edges = [{"source": e.source, "target": e.target} for e in topo.edges]
 
@@ -44,6 +50,8 @@ async def websocket_dashboard_endpoint(websocket: WebSocket):
                 "active_faults": active_faults,
                 "anomalies": anomalies,
                 "incident": incident_data,
+                "correlated_groups": groups_data,
+                "diagnosis": primary_diagnosis,
                 "edges": edges,
             }
 

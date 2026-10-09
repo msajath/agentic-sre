@@ -96,7 +96,67 @@ function updateDashboard(data) {
   renderActiveFaults(data.active_faults);
   renderIncidentBanner(data.incident, data.anomalies);
   renderAnomaliesList(data.anomalies);
+  renderDiagnosisReport(data.diagnosis);
   renderTopologySVG(data.services, data.edges);
+}
+
+function renderDiagnosisReport(diag) {
+  const badge = document.getElementById("rca-confidence-badge");
+  const content = document.getElementById("diagnosis-content");
+  if (!badge || !content) return;
+
+  if (!diag) {
+    badge.innerText = "STANDBY (HEALTHY)";
+    badge.className = "status-badge badge-HEALTHY";
+    content.innerHTML = `
+      <div style="font-size: 0.8rem; color: var(--text-dim); padding: 0.5rem 0;">
+        Cluster healthy. Awaiting anomalous signals to trigger correlation...
+      </div>
+    `;
+    return;
+  }
+
+  badge.innerText = `CONFIDENCE: ${(diag.confidence_score * 100).toFixed(0)}%`;
+  badge.className = "status-badge badge-CRITICAL";
+
+  let hopsHtml = '';
+  if (diag.causal_chain && diag.causal_chain.length > 0) {
+    hopsHtml = diag.causal_chain.map(h => `
+      <div style="font-size: 0.75rem; background: rgba(99, 102, 241, 0.1); border: 1px solid rgba(99, 102, 241, 0.25); border-radius: var(--radius-sm); padding: 0.4rem 0.6rem; margin-top: 0.35rem;">
+        <strong>${h.from_service}</strong> ──► <strong>${h.to_service}</strong>
+        <div style="color: var(--text-muted); font-size: 0.7rem;">${h.impact_description}</div>
+      </div>
+    `).join('');
+  } else {
+    hopsHtml = `<div style="font-size: 0.75rem; color: var(--text-muted);">Root cause isolated with no upstream cascade.</div>`;
+  }
+
+  content.innerHTML = `
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 0.75rem;">
+      <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: var(--radius-sm); padding: 0.6rem;">
+        <div style="font-size: 0.7rem; color: #fca5a5; font-weight: 700; text-transform: uppercase;">Diagnosed Root Cause</div>
+        <div style="font-size: 1rem; font-weight: 800; color: #f87171; font-family: monospace;">${diag.root_cause_service}</div>
+        <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 0.2rem;">Metric: ${diag.evidence.root_cause_metric}</div>
+      </div>
+      <div style="background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: var(--radius-sm); padding: 0.6rem;">
+        <div style="font-size: 0.7rem; color: #fde68a; font-weight: 700; text-transform: uppercase;">Cascading Symptoms</div>
+        <div style="font-size: 0.95rem; font-weight: 700; color: #fbbf24; font-family: monospace;">
+          ${diag.cascading_symptoms.length > 0 ? diag.cascading_symptoms.join(', ') : 'None (Isolated)'}
+        </div>
+        <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 0.2rem;">Cascade Delay: ${diag.evidence.cascade_delay_ms} ms</div>
+      </div>
+    </div>
+
+    <div style="margin-bottom: 0.75rem;">
+      <div style="font-size: 0.75rem; font-weight: 700; color: var(--text-muted);">Causal Propagation Chain</div>
+      ${hopsHtml}
+    </div>
+
+    <div style="background: rgba(99, 102, 241, 0.12); border: 1px solid rgba(99, 102, 241, 0.3); border-radius: var(--radius-sm); padding: 0.6rem;">
+      <div style="font-size: 0.7rem; color: #c7d2fe; font-weight: 700; text-transform: uppercase;">Recommended Remediation Intent</div>
+      <div style="font-size: 0.8rem; font-weight: 600; color: #e0e7ff; margin-top: 0.2rem;">${diag.recommended_remediation_intent}</div>
+    </div>
+  `;
 }
 
 function renderServicesGrid(services) {

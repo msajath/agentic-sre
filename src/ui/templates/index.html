@@ -115,6 +115,23 @@
           <!-- Dynamically populated with incidents -->
         </div>
       </div>
+
+      <!-- Sprint 3: Dependency-Aware Diagnosis & RCA Evidence Card -->
+      <div class="card" id="diagnosis-card" style="border-left: 4px solid var(--accent-primary);">
+        <div class="card-title-bar">
+          <div class="card-title">
+            <span>🔬</span> Dependency-Aware Root Cause Diagnosis (RCA)
+          </div>
+          <span id="rca-confidence-badge" class="status-badge badge-HEALTHY" style="font-size: 0.75rem;">
+            STANDBY
+          </span>
+        </div>
+        <div id="diagnosis-content">
+          <div style="font-size: 0.8rem; color: var(--text-dim); padding: 0.5rem 0;">
+            Awaiting multi-service telemetry signals for correlation...
+          </div>
+        </div>
+      </div>
     </section>
 
     <!-- Right Column: Chaos Injection, Audit Log, and Anomaly Stream -->
