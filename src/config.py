@@ -24,7 +24,14 @@ class Settings(BaseModel):
     anomaly_latency_p95_ms: float = 800.0       # >800ms triggers latency warning
     
     # Security Configurations
-    allowed_origins: List[str] = Field(default_factory=lambda: ["http://127.0.0.1:8000", "http://localhost:8000"])
+    allowed_origins: List[str] = Field(
+        default_factory=lambda: [
+            "http://127.0.0.1:8000", 
+            "http://localhost:8000",
+            "http://localhost:5173",
+            "http://127.0.0.1:5173"
+        ]
+    )
     secret_key: str = "agentic-sre-insecure-dev-key-change-in-prod"
     token_expire_minutes: int = 60
     

@@ -9,8 +9,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, Response
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import Response
 
 from src.api.ai_router import router as ai_router
 from src.api.audit_router import router as audit_router
@@ -18,6 +17,7 @@ from src.api.auth_router import router as auth_router
 from src.api.chaos_router import router as chaos_router
 from src.api.correlation_router import router as correlation_router
 from src.api.incident_router import router as incident_router
+from src.api.platform_extended_router import router as platform_extended_router
 from src.api.remediation_router import router as remediation_router
 from src.api.telemetry_router import router as telemetry_router
 from src.api.topology_router import router as topology_router
@@ -27,8 +27,6 @@ from src.database import init_db
 from src.services.simulation_engine import simulation_engine
 
 BASE_DIR = Path(__file__).resolve().parent
-STATIC_DIR = BASE_DIR / "ui" / "static"
-TEMPLATES_DIR = BASE_DIR / "ui" / "templates"
 
 
 @asynccontextmanager
@@ -62,7 +60,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "DELETE", "PUT"],
+    allow_methods=["GET", "POST", "DELETE", "PUT", "OPTIONS", "PATCH"],
     allow_headers=["*"],
 )
 
@@ -79,10 +77,7 @@ async def add_security_headers(request: Request, call_next):
     return response
 
 
-# 3. Mount Static UI Assets
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
-
-# 4. Include API Routers
+# 3. Include API Routers
 app.include_router(auth_router)
 app.include_router(telemetry_router)
 app.include_router(incident_router)
@@ -92,14 +87,20 @@ app.include_router(audit_router)
 app.include_router(correlation_router)
 app.include_router(remediation_router)
 app.include_router(ai_router)
+app.include_router(platform_extended_router)
 app.include_router(ws_router)
 
 
-# 5. UI Root Endpoint
-@app.get("/", response_class=HTMLResponse, tags=["Dashboard UI"])
-async def serve_dashboard():
-    index_file = TEMPLATES_DIR / "index.html"
-    return HTMLResponse(content=index_file.read_text(encoding="utf-8"))
+# 4. API Info Root Endpoint
+@app.get("/", tags=["API Root"])
+async def root():
+    return {
+        "status": "online",
+        "service": settings.app_name,
+        "version": settings.app_version,
+        "frontend": "http://localhost:5173",
+        "docs": "/docs"
+    }
 
 
 @app.get("/healthz", tags=["System Health"])
