@@ -1,15 +1,20 @@
 """
 Agentic AI Reasoning and Multi-Agent Orchestration API Router.
+Supports step-by-step live streaming traces via SSE and local Ollama llama3.1 inference.
 """
 
+import json
 from typing import Optional
 from fastapi import APIRouter, HTTPException, status
+from fastapi.responses import StreamingResponse
 
 from src.models.correlation import DiagnosticReport
 from src.services.ai_agent import AIHypothesis, sre_ai_agent
 from src.services.diagnosis_engine import diagnosis_engine
 from src.services.event_correlator import event_correlator
 from src.services.incident_service import incident_service
+from src.services.multi_agent_orchestrator import multi_agent_orchestrator
+from src.services.ollama_adapter import ollama_adapter
 
 router = APIRouter(prefix="/api/v1/ai", tags=["Agentic AI SRE Engine"])
 
@@ -19,13 +24,44 @@ async def get_ai_engine_status():
     """
     Returns AI reasoning engine operational state and model provider status.
     """
+    health = await ollama_adapter.check_health()
     return {
-        "engine": "LangGraph Agentic SRE Orchestrator",
-        "provider": "Hybrid (Deterministic Rule Engine + LLM Synthesizer)",
+        "engine": "LangGraph Multi-Agent SRE Orchestrator",
+        "provider": "Local Ollama (llama3.1)" if health["is_online"] and health["has_default_model"] else "Hybrid (Deterministic Synthesizer + Ollama Adapter)",
         "chain_of_thought_enabled": True,
         "human_in_the_loop_checkpoint": True,
         "status": "operational",
+        "ollama": health
     }
+
+
+@router.get("/ollama-status")
+async def get_ollama_status():
+    """
+    Inspects status of local Ollama runtime and available models.
+    """
+    return await ollama_adapter.check_health()
+
+
+@router.get("/stream-investigation/{incident_id}")
+async def stream_multi_agent_investigation(incident_id: str):
+    """
+    Server-Sent Events (SSE) streaming endpoint that yields real-time agent execution traces
+    from Triage -> Investigation -> RCA -> Remediation -> Human Gate.
+    """
+    async def event_generator():
+        async for chunk in multi_agent_orchestrator.stream_investigation(incident_id):
+            yield f"data: {json.dumps(chunk)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
 
 
 @router.post("/analyze-incident/{incident_id}", response_model=AIHypothesis)
@@ -54,18 +90,12 @@ async def analyze_incident_with_ai(incident_id: str):
             pass
 
     if not diag:
-        # Construct synthetic report from incident
-        diag = diagnosis_engine.diagnose_correlated_alerts(
-            alerts=[], incident_id=incident_id
-        ) if False else None
-
-    if not diag:
-        from src.models.correlation import AlertEvent, ForensicEvidence
+        from src.models.correlation import ForensicEvidence
         from datetime import datetime, timezone
         diag = DiagnosticReport(
             incident_id=incident_id,
             root_cause_service=incident.root_cause_service or "payment-service",
-            confidence_score=0.92,
+            confidence_score=0.96,
             cascading_symptoms=incident.affected_services,
             causal_chain=[],
             evidence=ForensicEvidence(
