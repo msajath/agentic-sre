@@ -569,10 +569,10 @@ export default function App() {
                         return (
                           <g key={svcName} transform={`translate(${pos.x}, ${pos.y})`}>
                             <circle r="18" fill="var(--topology-node-bg)" stroke={color} strokeWidth="2.5" />
-                            <text y="4" textAnchor="middle" fill="var(--text-primary)" fontSize="9" fontWeight="700" fontFamily="JetBrains Mono, monospace">
+                            <text y="4" textAnchor="middle" fill="var(--text-primary)" fontSize="9" fontWeight="700" fontFamily="var(--font-sans)">
                               {svcName.split('-')[0].slice(0, 4).toUpperCase()}
                             </text>
-                            <text y="32" textAnchor="middle" fill="var(--text-muted)" fontSize="10" fontWeight="600" fontFamily="Plus Jakarta Sans, sans-serif">
+                            <text y="32" textAnchor="middle" fill="var(--text-muted)" fontSize="10" fontWeight="600" fontFamily="var(--font-sans)">
                               {svcName}
                             </text>
                           </g>
