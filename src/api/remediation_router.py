@@ -12,9 +12,9 @@ from src.models.remediation import (
     ProposePlanRequest,
     RemediationPlan,
     RemediationState,
+    RemediationActionType,
 )
-from src.services.auth_service import get_current_user, require_roles
-from src.services.diagnosis_engine import diagnosis_engine
+from src.services.auth_service import require_roles
 from src.services.event_correlator import event_correlator
 from src.services.incident_service import incident_service
 from src.services.remediation_engine import remediation_engine
@@ -78,30 +78,30 @@ async def auto_propose_from_incident(
     if not incident:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Incident '{incident_id}' not found.")
 
-    root_svc = incident.root_cause_service or "payment-service"
+    root_svc = incident.root_cause_service
+    if not root_svc:
+        raise HTTPException(status_code=400, detail="Identify a root cause service before proposing remediation.")
     
     # Run ad-hoc diagnosis to feed rule engine
     groups = event_correlator.correlate_active_alerts()
-    diag = groups[0].diagnosis if groups else None
-
-    if not diag:
-        diag = diagnosis_engine.diagnose_correlated_alerts(
-            alerts=[], incident_id=incident_id
-        ) if False else None
+    diag = next((g.diagnosis for g in groups if g.root_cause_service == root_svc), None)
 
     # Evaluate rules
     if diag:
         ranked_rules = rule_engine.evaluate_rules(diag)
         action_type = ranked_rules[0].recommended_action
     else:
-        action_type = "RESTART_SERVICE"
+        action_type = RemediationActionType.RESTART_SERVICE
 
-    plan = remediation_engine.propose_plan(
-        incident_id=incident_id,
-        target_service=root_svc,
-        action_type=action_type,
-        proposed_by=f"rule-engine:{current_user.username}",
-    )
+    try:
+        plan = remediation_engine.propose_plan(
+            incident_id=incident_id,
+            target_service=root_svc,
+            action_type=action_type,
+            proposed_by=f"rule-engine:{current_user.username}",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return plan
 
 
@@ -122,6 +122,8 @@ async def approve_and_execute_plan(
             reason=decision.reason,
         )
         return plan
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except KeyError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except ValueError as e:
@@ -145,18 +147,28 @@ async def reject_plan(
             reason=decision.reason,
         )
         return plan
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except KeyError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
-@router.get("/plans/{plan_id}/verify")
-async def verify_plan_recovery(plan_id: str):
+@router.post("/plans/{plan_id}/verify")
+async def verify_plan_recovery(
+    plan_id: str,
+    current_user: User = Depends(require_roles([UserRole.ADMIN, UserRole.SRE_LEAD])),
+):
     """
     Triggers on-demand health recovery verification check.
     """
-    recovered = remediation_engine.verify_recovery(plan_id)
+    try:
+        recovered = remediation_engine.verify_recovery(plan_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     plan = remediation_engine.get_plan(plan_id)
     return {
         "plan_id": plan_id,

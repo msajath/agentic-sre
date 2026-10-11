@@ -2,7 +2,6 @@
 Unit and Integration Tests for Microservice Simulation and Cascading Failures.
 """
 
-import pytest
 from src.models.chaos import ChaosInjectionRequest, FaultType
 from src.services.chaos_controller import chaos_controller
 from src.services.simulation_engine import simulation_engine

@@ -1,0 +1,89 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  username       String   @id @db.VarChar(32)
+  email          String   @unique @db.VarChar(128)
+  role           String   @db.VarChar(32)
+  hashedPassword String   @map("hashed_password") @db.VarChar(256)
+  salt           String   @db.VarChar(64)
+  fullName       String   @map("full_name") @db.VarChar(128)
+  isActive       Boolean? @default(true) @map("is_active")
+
+  @@index([username], map: "ix_users_username")
+  @@map("users")
+}
+
+model Incident {
+  incidentId       String    @id @map("incident_id") @db.VarChar(32)
+  title            String    @db.VarChar(256)
+  description      String
+  state            String    @db.VarChar(32)
+  severity         String    @db.VarChar(32)
+  rootCauseService String?   @map("root_cause_service") @db.VarChar(64)
+  affectedServices String?   @default("[]") @map("affected_services")
+  timeline         String?   @default("[]")
+  createdAt        DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt        DateTime? @default(now()) @map("updated_at") @db.Timestamp(6)
+  resolvedAt       DateTime? @map("resolved_at") @db.Timestamp(6)
+
+  @@index([incidentId], map: "ix_incidents_incident_id")
+  @@index([state], map: "ix_incidents_state")
+  @@index([severity], map: "ix_incidents_severity")
+  @@map("incidents")
+}
+
+model AuditLog {
+  logId          String    @id @map("log_id") @db.VarChar(64)
+  timestamp      DateTime? @default(now()) @db.Timestamp(6)
+  eventType      String    @map("event_type") @db.VarChar(64)
+  actor          String    @db.VarChar(64)
+  actorRole      String    @map("actor_role") @db.VarChar(32)
+  targetResource String    @map("target_resource") @db.VarChar(128)
+  actionSummary  String    @map("action_summary") @db.VarChar(256)
+  details        String?   @default("{}")
+  prevHash       String    @map("prev_hash") @db.VarChar(64)
+  entryHash      String    @map("entry_hash") @db.VarChar(64)
+
+  @@index([logId], map: "ix_audit_ledger_log_id")
+  @@index([timestamp], map: "ix_audit_ledger_timestamp")
+  @@index([eventType], map: "ix_audit_ledger_event_type")
+  @@index([entryHash], map: "ix_audit_ledger_entry_hash")
+  @@map("audit_ledger")
+}
+
+model RemediationPlan {
+  planId                    String    @id @map("plan_id") @db.VarChar(32)
+  incidentId                String    @map("incident_id") @db.VarChar(32)
+  targetService             String    @map("target_service") @db.VarChar(64)
+  actionType                String    @map("action_type") @db.VarChar(64)
+  parameters                String?   @default("{}")
+  state                     String    @db.VarChar(32)
+  proposedBy                String    @map("proposed_by") @db.VarChar(64)
+  approvedBy                String?   @map("approved_by") @db.VarChar(64)
+  rejectedBy                String?   @map("rejected_by") @db.VarChar(64)
+  rejectionReason           String?   @map("rejection_reason")
+  safetyBlastRadius         String?   @default("[]") @map("safety_blast_radius")
+  createdAt                 DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+  executedAt                DateTime? @map("executed_at") @db.Timestamp(6)
+  verifiedAt                DateTime? @map("verified_at") @db.Timestamp(6)
+  recoveryVerificationNotes String?   @map("recovery_verification_notes")
+
+  @@index([planId], map: "ix_remediation_plans_plan_id")
+  @@index([incidentId], map: "ix_remediation_plans_incident_id")
+  @@index([state], map: "ix_remediation_plans_state")
+  @@map("remediation_plans")
+}
+
+model PlatformRecord {
+  key     String @id @db.VarChar(128)
+  payload String
+
+  @@map("platform_records")
+}

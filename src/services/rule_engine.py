@@ -3,7 +3,7 @@ Rule-Based Root Cause Diagnostic Engine.
 Evaluates deterministic SRE incident rules to produce ranked remediation hypotheses.
 """
 
-from typing import List, Optional
+from typing import List
 
 from src.models.correlation import DiagnosticReport
 from src.models.remediation import RemediationActionType, RuleEvaluationResult
@@ -11,6 +11,9 @@ from src.services.telemetry_stream import telemetry_stream
 
 
 class RuleEngine:
+    def __init__(self, telemetry=None):
+        self.telemetry_stream = telemetry or telemetry_stream
+
     def evaluate_rules(self, diagnosis: DiagnosticReport) -> List[RuleEvaluationResult]:
         """
         Evaluates heuristic and deterministic rules against the diagnosed incident context.
@@ -18,10 +21,10 @@ class RuleEngine:
         """
         results: List[RuleEvaluationResult] = []
         svc = diagnosis.root_cause_service
-        summary = telemetry_stream.get_service_summary(svc)
+        summary = self.telemetry_stream.get_service_summary(svc)
 
         # Rule 1: Service Outage / Container Crash
-        if summary.status.value in ["DOWN", "CRITICAL"] and summary.error_rate >= 0.50:
+        if summary.status.value == "DOWN" or "SERVICE_CRASH" in summary.active_faults:
             results.append(
                 RuleEvaluationResult(
                     rule_id="RULE-CRASH-01",

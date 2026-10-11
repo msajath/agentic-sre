@@ -4,31 +4,37 @@ Ensures zero SQL injection, strict payload validation, and bounded responses.
 """
 
 from typing import List, Optional
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import Depends, APIRouter, HTTPException, Query, status
 
 from src.models.incident import AnomalyReport, IncidentRecord
 from src.models.telemetry import HeartbeatPayload, ServiceMetricsSummary, TelemetryPoint
 from src.services.anomaly_detector import anomaly_detector
 from src.services.telemetry_stream import telemetry_stream
 from src.config import settings
+from src.models.auth import User, UserRole
+from src.services.auth_service import require_roles
 
 router = APIRouter(prefix="/api/v1/telemetry", tags=["Telemetry Ingestion"])
 
 
 @router.post("/events", status_code=status.HTTP_201_CREATED)
-async def ingest_telemetry_event(point: TelemetryPoint):
+async def ingest_telemetry_event(point: TelemetryPoint, current_user: User = Depends(require_roles([UserRole.ADMIN, UserRole.SRE_LEAD, UserRole.OPERATOR]))):
     """
     Ingests a single high-resolution telemetry point from any cluster microservice.
     """
+    if point.service_name not in settings.managed_services:
+        raise HTTPException(status_code=400, detail="Unknown service.")
     telemetry_stream.record_telemetry(point)
     return {"status": "accepted", "service_name": point.service_name}
 
 
 @router.post("/heartbeat", status_code=status.HTTP_200_OK)
-async def ingest_heartbeat(payload: HeartbeatPayload):
+async def ingest_heartbeat(payload: HeartbeatPayload, current_user: User = Depends(require_roles([UserRole.ADMIN, UserRole.SRE_LEAD, UserRole.OPERATOR]))):
     """
     Ingests an authenticated service heartbeat.
     """
+    if payload.service_name not in settings.managed_services:
+        raise HTTPException(status_code=400, detail="Unknown service.")
     telemetry_stream.record_heartbeat(payload)
     return {"status": "healthy", "service_name": payload.service_name}
 

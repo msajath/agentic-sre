@@ -1,7 +1,7 @@
 """
-LangGraph Multi-Agent SRE Orchestration Engine.
+Sequential Multi-Agent SRE Orchestration Engine.
 Implements specialized cooperative agents: Triage, Investigation, Root-Cause, Remediation, and Human Gate.
-Features step-by-step live streaming traces and resilient local Ollama (llama3.1) integration.
+Streams structured stages with optional Ollama narration and a durable approval plan.
 Complies with Section 4 (Multi-Agent Architecture) and Section 5 (Incident Workflow).
 """
 
@@ -11,9 +11,7 @@ import json
 from typing import Any, AsyncGenerator, Dict, List, Optional
 from pydantic import BaseModel, Field
 
-from src.models.incident import IncidentSeverity
-from src.services.audit_service import audit_service
-from src.services.event_correlator import event_correlator
+from src.config import settings
 from src.services.incident_service import incident_service
 from src.services.ollama_adapter import ollama_adapter
 from src.services.tool_gateway import tool_gateway
@@ -47,7 +45,7 @@ class MultiAgentWorkflowState(BaseModel):
     approval_required: bool = True
     approval_state: str = "PENDING_APPROVAL"
     execution_trace: List[AgentTraceStep] = Field(default_factory=list)
-    llm_engine_used: str = "LangGraph Local Synthesizer"
+    llm_engine_used: str = "Sequential Local Synthesizer"
 
 
 # ==============================================================================
@@ -61,7 +59,9 @@ class MultiAgentOrchestrator:
 
     async def run_triage_node(self, state: MultiAgentWorkflowState, incident: Any) -> AgentTraceStep:
         """Step 1: Triage Agent classifies severity, category, and initial blast radius."""
-        service_name = incident.root_cause_service or "payment-service"
+        service_name = incident.root_cause_service
+        if not service_name:
+            raise ValueError("Incident has no identified service.")
         affected = incident.affected_services or ["order-service"]
 
         prompt = f"""You are the Triage Agent in an enterprise SRE cluster.
@@ -84,12 +84,13 @@ Return your reasoning in 2 concise sentences."""
 
         state.severity = "CRITICAL" if "crash" in incident.title.lower() or "500" in incident.title.lower() else "HIGH"
         state.symptom_category = "LATENCY_CASCADE" if "latency" in incident.description.lower() else "ERROR_STORM"
-        state.blast_radius = list(set([service_name] + affected))
+        state.root_cause_service = service_name
+        state.blast_radius = sorted(set([service_name] + affected))
         state.current_node = "INVESTIGATION"
 
         step = AgentTraceStep(
             node="TRIAGE",
-            agent_name="Triage Agent (llama3.1)",
+            agent_name="Triage Stage",
             status="COMPLETED",
             thought_process=thought,
             tools_called=[],
@@ -117,7 +118,7 @@ Return your reasoning in 2 concise sentences."""
                 "audit_hash": health_res.audit_hash
             })
             collected_evidence.append({
-                "source": "Prometheus Health Probe",
+                "source": "Simulated telemetry",
                 "service": svc,
                 "error_rate": health_res.output.get("error_rate"),
                 "p95_latency_ms": health_res.output.get("p95_latency_ms"),
@@ -134,7 +135,7 @@ Return your reasoning in 2 concise sentences."""
             })
             if logs_res.output.get("logs"):
                 collected_evidence.append({
-                    "source": "Pod Structured Logs",
+                    "source": "Synthetic diagnostic logs",
                     "service": svc,
                     "latest_log": logs_res.output["logs"][0]["message"]
                 })
@@ -174,7 +175,8 @@ Return your reasoning in 2 concise sentences."""
             key=lambda e: (len(e.get("faults", [])) * 10) + (e.get("error_rate", 0) * 100) + (e.get("p95_latency_ms", 0) / 100),
             reverse=True
         )
-        top_culprit = ranked_svcs[0]["service"] if ranked_svcs else (state.blast_radius[0] if state.blast_radius else "payment-service")
+        has_live_anomaly = any(e.get("faults") or e.get("error_rate", 0) > settings.anomaly_error_rate_threshold or e.get("p95_latency_ms", 0) > settings.anomaly_latency_p95_ms for e in ranked_svcs)
+        top_culprit = ranked_svcs[0]["service"] if has_live_anomaly else state.root_cause_service
 
         prompt = f"""You are the Root Cause Analysis (RCA) SRE Agent.
 Collected Telemetry Evidence: {json.dumps(state.evidence_bundle[:4])}
@@ -190,16 +192,16 @@ Identify the root cause service and explain the causal chain in 2 sentences."""
         thought = ollama_res.get("content") or f"Forensic evidence identifies [{top_culprit}] as the causal root. Downstream latency cascades propagated across {state.blast_radius}."
 
         state.root_cause_service = top_culprit
-        state.confidence_score = 0.96
+        state.confidence_score = 0.0 if not has_live_anomaly else (0.85 if ranked_svcs[0].get("faults") else 0.5)
         state.hypotheses = [
             {
                 "hypothesis": f"Primary service degradation in [{top_culprit}] exhausted thread pools",
-                "confidence": 0.96,
+                "confidence": state.confidence_score,
                 "is_accepted": True
             },
             {
-                "hypothesis": f"Transient network jitter on caller nodes",
-                "confidence": 0.04,
+                "hypothesis": "Transient network jitter on caller nodes",
+                "confidence": 1 - state.confidence_score,
                 "is_accepted": False
             }
         ]
@@ -207,7 +209,7 @@ Identify the root cause service and explain the causal chain in 2 sentences."""
 
         step = AgentTraceStep(
             node="ROOT_CAUSE_ANALYSIS",
-            agent_name="RCA Agent (llama3.1)",
+            agent_name="Root Cause Stage",
             status="COMPLETED",
             thought_process=thought,
             tools_called=[],
@@ -223,7 +225,6 @@ Identify the root cause service and explain the causal chain in 2 sentences."""
     async def run_remediation_node(self, state: MultiAgentWorkflowState) -> AgentTraceStep:
         """Step 4: Remediation Agent produces reversible containment plan and halts at Human Checkpoint."""
         root_svc = state.root_cause_service or "payment-service"
-        action_type = "RESTART_POD" if "crash" in state.symptom_category.lower() else "ENABLE_CIRCUIT_BREAKER_AND_RESTART"
 
         plan = {
             "target_service": root_svc,
@@ -235,20 +236,25 @@ Identify the root cause service and explain the causal chain in 2 sentences."""
             ],
             "execution_tool": "restart_pod",
             "expected_effect": f"Clears deadlocks and active error storms on {root_svc}",
-            "rollback_procedure": "Restore prior revision if health checks fail within 30s",
+            "rollback_procedure": "Simulation only; failed verification requires manual review",
             "safety_blast_radius": [root_svc]
         }
 
+        from src.services.remediation_engine import remediation_engine
+        from src.models.remediation import RemediationActionType
+        persisted = remediation_engine.propose_plan(state.incident_id, root_svc, RemediationActionType.RESTART_SERVICE)
+        plan["plan_id"] = persisted.plan_id
+        plan["simulation"] = True
         state.proposed_remediation = plan
         state.approval_required = True
         state.approval_state = "PENDING_APPROVAL"
         state.current_node = "HUMAN_APPROVAL_CHECKPOINT"
 
-        thought = f"Synthesized containment plan for [{root_svc}]. Action classified as MEDIUM RISK (State-changing mutation) — pausing at Human Approval Barrier."
+        thought = f"Synthesized containment plan for [{root_svc}]. Action classified as MEDIUM RISK (State-changing mutation) â€” pausing at Human Approval Barrier."
 
         step = AgentTraceStep(
             node="REMEDIATION",
-            agent_name="Remediation Agent (llama3.1)",
+            agent_name="Remediation Stage",
             status="PAUSED_AT_HUMAN_GATE",
             thought_process=thought,
             tools_called=[],
@@ -263,21 +269,11 @@ Identify the root cause service and explain the causal chain in 2 sentences."""
 
     async def stream_investigation(self, incident_id: str) -> AsyncGenerator[Dict[str, Any], None]:
         """
-        Executes LangGraph nodes sequentially, yielding real-time updates for each agent.
+        Executes Sequential nodes sequentially, yielding real-time updates for each agent.
         """
         incident = incident_service.get_incident(incident_id)
         if not incident:
-            # Fallback mock incident
-            from src.models.incident import IncidentModel, IncidentSeverity, IncidentState
-            incident = IncidentModel(
-                incident_id=incident_id,
-                title="Correlated Anomaly Spike in Payment Gateway",
-                description="High latency cascade detected across inter-service calls.",
-                severity=IncidentSeverity.HIGH,
-                state=IncidentState.INVESTIGATING,
-                root_cause_service="payment-service",
-                affected_services=["order-service"]
-            )
+            raise KeyError("Incident not found.")
 
         state = MultiAgentWorkflowState(incident_id=incident_id)
 

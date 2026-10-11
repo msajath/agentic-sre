@@ -6,7 +6,7 @@ Deduplicates alert storms into unified correlated incident clusters.
 from collections import deque
 from datetime import datetime, timedelta, timezone
 import threading
-from typing import Dict, List, Optional
+from typing import Dict, List
 import networkx as nx
 
 from src.models.correlation import (
@@ -14,7 +14,7 @@ from src.models.correlation import (
     CorrelatedIncidentGroup,
     DiagnosticReport,
 )
-from src.models.incident import AnomalyReport, IncidentSeverity
+from src.models.incident import AnomalyReport
 from src.services.anomaly_detector import anomaly_detector
 from src.services.diagnosis_engine import diagnosis_engine
 from src.services.topology_graph import topology_engine
@@ -39,6 +39,10 @@ class EventCorrelator:
             message=anomaly.description,
         )
         with self._lock:
+            existing = next((item for item in self._recent_alerts if item.service_name == alert.service_name
+                             and item.metric_name == alert.metric_name and (alert.timestamp - item.timestamp).total_seconds() < self.window_seconds), None)
+            if existing:
+                return existing
             self._recent_alerts.append(alert)
         return alert
 
@@ -69,7 +73,7 @@ class EventCorrelator:
         undirected_topo = topology_engine.graph.to_undirected()
         
         # Build subgraph of affected services
-        affected_services = list({a.service_name for a in active_alerts})
+        affected_services = sorted({a.service_name for a in active_alerts})
         subgraph = undirected_topo.subgraph(affected_services)
         
         # Connected components represent independent incident clusters!
@@ -87,6 +91,7 @@ class EventCorrelator:
             # Run diagnosis engine on this cluster
             diagnosis: DiagnosticReport = diagnosis_engine.diagnose_correlated_alerts(cluster_alerts)
 
+            previous = next((g for g in self.get_active_groups() if set(g.affected_services) == cluster_services), None)
             group = CorrelatedIncidentGroup(
                 root_cause_service=diagnosis.root_cause_service,
                 affected_services=list(cluster_services),
@@ -94,6 +99,8 @@ class EventCorrelator:
                 alerts=cluster_alerts,
                 diagnosis=diagnosis,
             )
+            if previous:
+                group.group_id = previous.group_id
             new_groups.append(group)
 
         with self._lock:

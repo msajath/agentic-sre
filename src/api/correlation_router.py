@@ -4,12 +4,10 @@ Exposes multi-alert clusters, causal hop DAGs, and forensic root cause evidence.
 """
 
 from typing import List, Optional
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter
 
 from src.models.correlation import CorrelatedIncidentGroup, DiagnosticReport
-from src.services.diagnosis_engine import diagnosis_engine
 from src.services.event_correlator import event_correlator
-from src.services.telemetry_stream import telemetry_stream
 
 router = APIRouter(prefix="/api/v1/correlation", tags=["Event Correlation & RCA"])
 

@@ -4,14 +4,26 @@ Exposes tamper-evident action logs and on-demand SHA-256 chain verification.
 """
 
 from typing import List, Optional
-from fastapi import APIRouter, Depends, Query
+import json
+from fastapi import APIRouter, Query
 
 from src.models.audit import AuditEventType, AuditIntegrityReport, AuditLogEntry
-from src.models.auth import User
 from src.services.audit_service import audit_service
-from src.services.auth_service import get_current_user
+from src.database import PlatformRecordModel, SessionLocal
 
 router = APIRouter(prefix="/api/v1/audit", tags=["Audit Ledger"])
+
+
+@router.get("/legacy")
+async def get_legacy_audit_archive(limit: int = Query(default=50, ge=1, le=200)):
+    """Unverified legacy history is separate from the current verified ledger."""
+    with SessionLocal() as session:
+        summary = session.get(PlatformRecordModel, "migration:postgres-audit-archive")
+        rows = session.query(PlatformRecordModel).filter(
+            PlatformRecordModel.key.startswith("legacy-audit:")
+        ).order_by(PlatformRecordModel.key).limit(limit).all()
+        return {"verified": False, "summary": json.loads(summary.payload) if summary else None,
+                "records": [json.loads(row.payload) for row in rows]}
 
 
 @router.get("/logs", response_model=List[AuditLogEntry])

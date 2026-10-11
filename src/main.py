@@ -4,12 +4,14 @@ Implements defense-in-depth security headers, CORS isolation, and lifecycle mana
 """
 
 from contextlib import asynccontextmanager
-import os
-from pathlib import Path
+import logging
+from sqlalchemy.exc import SQLAlchemyError
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import Response, JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
 
 from src.api.ai_router import router as ai_router
 from src.api.audit_router import router as audit_router
@@ -26,7 +28,13 @@ from src.config import settings
 from src.database import init_db
 from src.services.simulation_engine import simulation_engine
 
-BASE_DIR = Path(__file__).resolve().parent
+from src.services.auth_service import auth_service, get_current_user
+from src.services.audit_service import audit_service
+from src.services.incident_service import incident_service
+from src.services.remediation_engine import remediation_engine
+from src.services.platform_service import platform_service
+logger = logging.getLogger(__name__)
+FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
 
 @asynccontextmanager
@@ -35,23 +43,25 @@ async def lifespan(app: FastAPI):
     Manages background services lifecycle.
     Initializes database schema, starts simulation loop on boot, cleans up gracefully on exit.
     """
-    # 0. Initialize persistent SQLite database
     init_db()
-    print("[Agentic SRE] Persistent SQLite database connected & verified.")
+    audit_service.initialize()
+    auth_service.initialize()
+    incident_service.initialize()
+    remediation_engine.initialize()
+    platform_service.initialize()
+    if settings.simulation_enabled:
+        simulation_engine.start()
+    try:
+        yield
+    finally:
+        await simulation_engine.stop()
 
-    # 1. Start cluster simulation
-    simulation_engine.start()
-    print("[Agentic SRE] Cluster microservice simulator started.")
-    yield
-    # 2. Stop simulation on shutdown
-    simulation_engine.stop()
-    print("[Agentic SRE] Cluster microservice simulator stopped gracefully.")
 
 
 app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
-    description="Intelligent Incident Management and Automated Remediation Platform",
+    description="Incident investigation and human-approved simulation recovery",
     lifespan=lifespan,
 )
 
@@ -79,26 +89,28 @@ async def add_security_headers(request: Request, call_next):
 
 # 3. Include API Routers
 app.include_router(auth_router)
-app.include_router(telemetry_router)
-app.include_router(incident_router)
-app.include_router(chaos_router)
-app.include_router(topology_router)
-app.include_router(audit_router)
-app.include_router(correlation_router)
-app.include_router(remediation_router)
-app.include_router(ai_router)
-app.include_router(platform_extended_router)
+app.include_router(telemetry_router, dependencies=[Depends(get_current_user)])
+app.include_router(incident_router, dependencies=[Depends(get_current_user)])
+app.include_router(chaos_router, dependencies=[Depends(get_current_user)])
+app.include_router(topology_router, dependencies=[Depends(get_current_user)])
+app.include_router(audit_router, dependencies=[Depends(get_current_user)])
+app.include_router(correlation_router, dependencies=[Depends(get_current_user)])
+app.include_router(remediation_router, dependencies=[Depends(get_current_user)])
+app.include_router(ai_router, dependencies=[Depends(get_current_user)])
+app.include_router(platform_extended_router, dependencies=[Depends(get_current_user)])
 app.include_router(ws_router)
 
 
 # 4. API Info Root Endpoint
 @app.get("/", tags=["API Root"])
 async def root():
+    if (FRONTEND_DIR / "index.html").is_file():
+        return FileResponse(FRONTEND_DIR / "index.html")
     return {
         "status": "online",
         "service": settings.app_name,
         "version": settings.app_version,
-        "frontend": "http://localhost:5173",
+        "mode": "simulation" if settings.simulation_enabled else "telemetry-only",
         "docs": "/docs"
     }
 
@@ -109,6 +121,27 @@ async def health_check():
     return {"status": "ok", "app": settings.app_name, "version": settings.app_version}
 
 
+
+@app.exception_handler(SQLAlchemyError)
+async def database_error_handler(request: Request, exc: SQLAlchemyError):
+    logger.error("Database operation failed", exc_info=True)
+    return JSONResponse(status_code=503, content={"detail": "Storage is unavailable. The operation did not complete."})
+
+
+@app.get("/readyz", tags=["System Health"])
+async def readiness_check():
+    from sqlalchemy import text
+    from src.database import SessionLocal
+    with SessionLocal() as session:
+        session.execute(text("SELECT 1 FROM users LIMIT 1"))
+    if settings.simulation_enabled and not simulation_engine.is_running:
+        return JSONResponse(status_code=503, content={"status": "simulation stopped"})
+    return {"status": "ready"}
+
+if (FRONTEND_DIR / "assets").is_dir():
+    app.mount("/assets", StaticFiles(directory=FRONTEND_DIR / "assets"), name="assets")
+
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("src.main:app", host=settings.host, port=settings.port, reload=True)
+    uvicorn.run("src.main:app", host=settings.host, port=settings.port, reload=settings.debug)

@@ -14,7 +14,7 @@ from src.models.incident import (
     IncidentState,
     IncidentTransitionRequest,
 )
-from src.services.auth_service import get_current_user, require_roles
+from src.services.auth_service import require_roles
 from src.services.incident_service import incident_service
 
 router = APIRouter(prefix="/api/v1/incidents", tags=["Incident Management"])

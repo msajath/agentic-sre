@@ -23,7 +23,9 @@ class RemediationState(str, Enum):
     REJECTED = "REJECTED"
     EXECUTING = "EXECUTING"
     VERIFIED_SUCCESSFUL = "VERIFIED_SUCCESSFUL"
-    FAILED_ROLLBACK = "FAILED_ROLLBACK"
+    FAILED_ROLLBACK = "FAILED_ROLLBACK"  # Historical state retained for stored records.
+    FAILED_VERIFICATION = "FAILED_VERIFICATION"
+    EXECUTION_FAILED = "EXECUTION_FAILED"
 
 
 class RuleEvaluationResult(BaseModel):
@@ -37,7 +39,7 @@ class RuleEvaluationResult(BaseModel):
 
 
 class RemediationPlan(BaseModel):
-    plan_id: str = Field(default_factory=lambda: f"REM-{str(uuid4())[:6].upper()}")
+    plan_id: str = Field(default_factory=lambda: f"REM-{uuid4().hex[:16].upper()}")
     incident_id: str
     target_service: str
     action_type: RemediationActionType

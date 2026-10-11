@@ -3,11 +3,10 @@ Unit & Integration Tests for Rule Engine, Remediation Approval Gates, and Recove
 """
 
 from datetime import datetime, timezone
-import pytest
 
 from src.models.chaos import ChaosInjectionRequest, FaultType
 from src.models.correlation import DiagnosticReport, ForensicEvidence
-from src.models.incident import IncidentRecord, IncidentSeverity, IncidentState
+from src.models.incident import IncidentSeverity, IncidentState
 from src.models.remediation import RemediationActionType, RemediationState
 from src.services.chaos_controller import chaos_controller
 from src.services.incident_service import incident_service

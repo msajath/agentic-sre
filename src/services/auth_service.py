@@ -1,177 +1,110 @@
-"""
-Authentication and RBAC Security Service.
-Utilizes salted PBKDF2-HMAC-SHA256 for password security and HMAC-SHA256 JWT tokens.
-"""
-
+"""Database-backed credentials and server-side role enforcement."""
 from datetime import datetime, timedelta, timezone
 import hashlib
-import os
 import secrets
-from typing import Dict, List, Optional
-from fastapi import Depends, HTTPException, Security, status
+from typing import List, Optional
+from fastapi import Depends, HTTPException, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 import jwt
-
+from pydantic import ValidationError
 from src.config import settings
 from src.database import SessionLocal, UserModel
-from src.models.auth import TokenPayload, TokenResponse, User, UserPublic, UserRole
+from src.models.auth import TokenPayload, TokenResponse, User, UserRole
 
-# HTTP Bearer scheme
 security_bearer = HTTPBearer(auto_error=False)
 
-
 class AuthService:
-    def __init__(self):
-        self._users: Dict[str, User] = {}
-        self._jwt_secret = settings.secret_key
-        self._jwt_algorithm = "HS256"
-        self._token_expire_minutes = settings.token_expire_minutes
-        self._seed_default_users()
-
     def _hash_password(self, password: str, salt: str) -> str:
-        """Secure PBKDF2 password hashing (100,000 iterations of SHA-256)."""
-        key = hashlib.pbkdf2_hmac(
-            "sha256",
-            password.encode("utf-8"),
-            salt.encode("utf-8"),
-            100_000,
-        )
-        return key.hex()
+        return hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 100_000).hex()
 
-    def _seed_default_users(self):
-        """Seeds enterprise user accounts into SQLite database if not present."""
-        default_accounts = [
-            ("admin", "admin@virtusa-sre.com", "AdminSre@2026", UserRole.ADMIN, "Principal SRE Architect"),
-            ("lead", "lead@virtusa-sre.com", "LeadSre@2026", UserRole.SRE_LEAD, "SRE Incident Lead"),
-            ("operator", "operator@virtusa-sre.com", "OperatorSre@2026", UserRole.OPERATOR, "SRE Operations Engineer"),
-            ("viewer", "viewer@virtusa-sre.com", "ViewerSre@2026", UserRole.VIEWER, "Executive Observability Viewer"),
-        ]
+    def initialize(self):
+        """Bootstrap explicit credentials; disable legacy demo accounts."""
+        with SessionLocal.begin() as session:
+            users = session.query(UserModel).all()
+            for user in users:
+                legacy_password = f"{user.username.capitalize()}Sre@2026"
+                if user.username in {"admin", "lead", "operator", "viewer"} and secrets.compare_digest(
+                    user.hashed_password, self._hash_password(legacy_password, user.salt)
+                ):
+                    if user.username == "admin" and settings.bootstrap_admin_password:
+                        user.salt = secrets.token_hex(16)
+                        user.hashed_password = self._hash_password(settings.bootstrap_admin_password, user.salt)
+                        user.is_active = True
+                    else:
+                        user.is_active = False
+            if not users and settings.bootstrap_admin_password:
+                session.add(self._user_row("admin", settings.bootstrap_admin_password, UserRole.ADMIN))
+            if settings.environment.lower() == "production" and not (
+                any(u.is_active and u.role == UserRole.ADMIN.value for u in users)
+                or (not users and settings.bootstrap_admin_password)
+            ):
+                raise ValueError("No active administrator. Set BOOTSTRAP_ADMIN_PASSWORD or provision one with python -m src.manage.")
 
+    def _user_row(self, username: str, password: str, role: UserRole) -> UserModel:
+        if not 12 <= len(password) <= 128:
+            raise ValueError("Passwords must contain 12 to 128 characters.")
+        salt = secrets.token_hex(16)
+        user = User(username=username.lower(), email=f"{username}@sre.example.com",
+                    role=role, salt=salt, hashed_password=self._hash_password(password, salt),
+                    full_name=username)
+        return UserModel(**user.model_dump(mode="json"))
+
+    def provision_user(self, username: str, password: str, role: UserRole) -> None:
+        """Local provisioning, also usable to rotate or reactivate accounts."""
+        row = self._user_row(username, password, role)
+        with SessionLocal.begin() as session:
+            session.merge(row)
+
+    def get_user_by_username(self, username: str) -> Optional[User]:
         with SessionLocal() as session:
-            try:
-                existing_count = session.query(UserModel).count()
-                if existing_count == 0:
-                    for username, email, pwd, role, full_name in default_accounts:
-                        salt = secrets.token_hex(16)
-                        hashed = self._hash_password(pwd, salt)
-                        user_model = UserModel(
-                            username=username,
-                            email=email,
-                            role=role.value,
-                            hashed_password=hashed,
-                            salt=salt,
-                            full_name=full_name,
-                            is_active=True,
-                        )
-                        session.add(user_model)
-                    session.commit()
-
-                # Hydrate in-memory cache from database
-                for u in session.query(UserModel).all():
-                    self._users[u.username] = User(
-                        username=u.username,
-                        email=u.email,
-                        role=UserRole(u.role),
-                        hashed_password=u.hashed_password,
-                        salt=u.salt,
-                        full_name=u.full_name,
-                        is_active=u.is_active,
-                    )
-            except Exception as e:
-                print(f"[Auth DB Warning] {e}")
+            row = session.get(UserModel, username.lower())
+            if row is None:
+                return None
+            return User(username=row.username, email=row.email, role=row.role,
+                        hashed_password=row.hashed_password, salt=row.salt,
+                        full_name=row.full_name, is_active=row.is_active)
 
     def authenticate_user(self, username: str, password: str) -> Optional[User]:
-        """Validates credentials against hashed passwords with constant-time comparison."""
-        user = self._users.get(username.lower())
-        if not user or not user.is_active:
-            return None
-
-        computed_hash = self._hash_password(password, user.salt)
-        if secrets.compare_digest(computed_hash, user.hashed_password):
+        user = self.get_user_by_username(username)
+        computed = self._hash_password(password, user.salt if user else "invalid-account")
+        if user and user.is_active and secrets.compare_digest(computed, user.hashed_password):
             return user
         return None
 
     def create_access_token(self, user: User) -> TokenResponse:
-        """Issues scoped JWT token with expiration and role claims."""
         now = datetime.now(timezone.utc)
-        expires_delta = timedelta(minutes=self._token_expire_minutes)
-        exp = int((now + expires_delta).timestamp())
-        iat = int(now.timestamp())
-
-        payload = {
-            "sub": user.username,
-            "role": user.role.value,
-            "exp": exp,
-            "iat": iat,
-        }
-
-        token = jwt.encode(payload, self._jwt_secret, algorithm=self._jwt_algorithm)
-        return TokenResponse(
-            access_token=token,
-            token_type="bearer",
-            role=user.role,
-            username=user.username,
-            expires_in_sec=int(expires_delta.total_seconds()),
-        )
+        expiry = timedelta(minutes=settings.token_expire_minutes)
+        payload = {"sub": user.username, "role": user.role.value,
+                   "exp": int((now + expiry).timestamp()), "iat": int(now.timestamp())}
+        return TokenResponse(access_token=jwt.encode(payload, settings.secret_key, algorithm="HS256"),
+                             role=user.role, username=user.username, expires_in_sec=int(expiry.total_seconds()))
 
     def verify_token(self, token_str: str) -> TokenPayload:
-        """Decodes and cryptographically validates JWT token."""
         try:
-            payload_dict = jwt.decode(
-                token_str,
-                self._jwt_secret,
-                algorithms=[self._jwt_algorithm],
-            )
-            return TokenPayload(**payload_dict)
-        except jwt.ExpiredSignatureError:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Security token has expired. Please re-authenticate.",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        except jwt.PyJWTError:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid cryptographic token.",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
+            return TokenPayload(**jwt.decode(token_str, settings.secret_key, algorithms=["HS256"],
+                                            options={"require": ["sub", "role", "exp", "iat"]}))
+        except (jwt.PyJWTError, ValidationError) as exc:
+            raise HTTPException(status_code=401, detail="Invalid or expired token. Please sign in.",
+                                headers={"WWW-Authenticate": "Bearer"}) from exc
 
-    def get_user_by_username(self, username: str) -> Optional[User]:
-        return self._users.get(username.lower())
-
+    def resolve_token(self, token_str: str) -> User:
+        payload = self.verify_token(token_str)
+        user = self.get_user_by_username(payload.sub)
+        if not user or not user.is_active or user.role != payload.role:
+            raise HTTPException(status_code=401, detail="Account is inactive or its role has changed.")
+        return user
 
 auth_service = AuthService()
 
-
-# Security Dependencies for FastAPI
-async def get_current_user(
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(security_bearer),
-) -> User:
-    """FastAPI dependency: Resolves authenticated user from Bearer JWT header."""
-    if not credentials or not credentials.credentials:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication credentials missing.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    payload = auth_service.verify_token(credentials.credentials)
-    user = auth_service.get_user_by_username(payload.sub)
-    if not user or not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authenticated user account not found or deactivated.",
-        )
-    return user
-
+async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] = Security(security_bearer)) -> User:
+    if not credentials or credentials.scheme.lower() != "bearer":
+        raise HTTPException(status_code=401, detail="Authentication required.",
+                            headers={"WWW-Authenticate": "Bearer"})
+    return auth_service.resolve_token(credentials.credentials)
 
 def require_roles(allowed_roles: List[UserRole]):
-    """FastAPI RBAC decorator dependency: Enforces role permissions."""
     async def role_checker(current_user: User = Depends(get_current_user)) -> User:
         if current_user.role not in allowed_roles:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Access denied: Role '{current_user.role.value}' is unauthorized. Required: {[r.value for r in allowed_roles]}",
-            )
+            raise HTTPException(status_code=403, detail="Your account cannot perform this action.")
         return current_user
     return role_checker

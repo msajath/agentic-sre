@@ -1,14 +1,12 @@
 """
 Typed Operational Tool Gateway for Agentic SRE Platform.
 Enforces strict schema validation, allowlisted parameters, bounded execution,
-and immutable cryptographic SHA-256 audit ledger logging.
+and tamper-evident cryptographic SHA-256 audit ledger logging.
 Complies with Section 9 (Tool and MCP Design) and Section 13 (Safety Architecture).
 """
 
 from datetime import datetime, timezone
-import hashlib
-import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field
 
 from src.config import settings
@@ -99,7 +97,8 @@ class ToolGateway:
     def get_service_health(self, service_name: str, time_window_sec: int = 60) -> ToolExecutionResult:
         """Queries current status, golden signals, and active faults for a specific service."""
         start_t = datetime.now(timezone.utc)
-        self._validate_service(service_name)
+        query = ServiceHealthQuery(service_name=service_name, time_window_sec=time_window_sec)
+        self._validate_service(query.service_name)
         
         summary = telemetry_stream.get_service_summary(service_name)
         active_faults = chaos_controller.get_active_faults(service_name)
@@ -129,6 +128,9 @@ class ToolGateway:
     def query_metrics(self, service_name: str, metric_type: str = "latency", time_window_sec: int = 60) -> ToolExecutionResult:
         """Fetches granular time-series points for the requested metric."""
         start_t = datetime.now(timezone.utc)
+        MetricsQuery(service_name=service_name, metric_type=metric_type, time_window_sec=time_window_sec)
+        if metric_type not in {"latency", "error_rate", "cpu", "memory"}:
+            raise ValueError("Unsupported metric type.")
         self._validate_service(service_name)
 
         summary = telemetry_stream.get_service_summary(service_name)
@@ -139,7 +141,7 @@ class ToolGateway:
             "metric_type": metric_type,
             "current_value": (
                 summary.p95_latency_ms if metric_type == "latency" else
-                (summary.error_rate if metric_type == "error_rate" else summary.cpu_usage_pct)
+                (summary.error_rate if metric_type == "error_rate" else summary.memory_usage_pct if metric_type == "memory" else summary.cpu_usage_pct)
             ),
             "recent_sample_count": len(recent_pts),
             "is_anomalous": summary.error_rate > settings.anomaly_error_rate_threshold or summary.p95_latency_ms > settings.anomaly_latency_p95_ms
@@ -161,6 +163,9 @@ class ToolGateway:
         start_t = datetime.now(timezone.utc)
         self._validate_service(service_name)
 
+        LogsQuery(service_name=service_name, severity=severity, limit=limit)
+        if severity not in {"INFO", "WARN", "ERROR", "CRITICAL"}:
+            raise ValueError("Unsupported log severity.")
         summary = telemetry_stream.get_service_summary(service_name)
         simulated_logs = []
 
@@ -188,8 +193,9 @@ class ToolGateway:
 
         output = {
             "service_name": service_name,
-            "total_matches": len(simulated_logs),
-            "logs": simulated_logs[:limit]
+            "simulation": True,
+            "total_matches": len([log for log in simulated_logs if log["level"] == severity]),
+            "logs": [log for log in simulated_logs if log["level"] == severity][:limit]
         }
 
         latency_ms = (datetime.now(timezone.utc) - start_t).total_seconds() * 1000
@@ -233,11 +239,23 @@ class ToolGateway:
     # WRITE / REMEDIATION TOOLS (HUMAN APPROVAL GATED)
     # --------------------------------------------------------------------------
 
-    def restart_pod(self, service_name: str, approved_by: str = "sre-lead") -> ToolExecutionResult:
+    def restart_pod(self, service_name: str, plan_id: str) -> ToolExecutionResult:
         """Executes pod restart and clears transient faults."""
         start_t = datetime.now(timezone.utc)
         self._validate_service(service_name)
 
+        from src.database import RemediationPlanModel, SessionLocal
+        from src.services.auth_service import auth_service
+        with SessionLocal() as session:
+            plan = session.get(RemediationPlanModel, plan_id)
+            if not plan or plan.target_service != service_name or plan.action_type != "RESTART_SERVICE" or plan.state != "EXECUTING" or not plan.approved_by or not plan.executed_at:
+                raise PermissionError("Restart requires an approved executing restart plan.")
+            approver = auth_service.get_user_by_username(plan.approved_by)
+            if not approver or not approver.is_active or approver.role.value not in {"ADMIN", "SRE_LEAD"}:
+                raise PermissionError("Plan approver is no longer authorized.")
+            approved_by = approver.username
+        # Audit before changing simulation state.
+        self._record_audit("restart_pod_authorization", {"service_name": service_name, "plan_id": plan_id}, "Approved simulation restart", actor=approved_by)
         # Clear any injected faults simulating pod recycling
         chaos_controller.remove_fault(service_name)
         telemetry_stream.flush_service_history(service_name)

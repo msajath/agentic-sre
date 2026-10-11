@@ -4,12 +4,13 @@ Connects to Ollama (http://localhost:11434) running open-source models (llama3.1
 with automatic fallback to the platform rule engine if Ollama is offline.
 """
 
-import json
 from typing import Any, Dict, Optional
 import httpx
 
-OLLAMA_BASE_URL = "http://localhost:11434"
-DEFAULT_MODEL = "llama3.1"
+from src.config import settings
+
+OLLAMA_BASE_URL = settings.ollama_base_url
+DEFAULT_MODEL = settings.ollama_model
 
 
 class OllamaAdapter:
@@ -25,8 +26,8 @@ class OllamaAdapter:
                 res = await client.get(f"{self.base_url}/api/tags")
                 if res.status_code == 200:
                     models = [m.get("name") for m in res.json().get("models", [])]
-                    has_llama = any("llama3" in m.lower() for m in models)
-                    active_model = self.default_model if has_llama else (models[0] if models else self.default_model)
+                    has_llama = any(m.split(":")[0] == self.default_model.split(":")[0] for m in models)
+                    active_model = next((m for m in models if m.split(":")[0] == self.default_model.split(":")[0]), models[0] if models else self.default_model)
                     self._active_model = active_model
                     return {
                         "is_online": True,
@@ -83,7 +84,7 @@ class OllamaAdapter:
                         "is_local_llm": True,
                         "eval_count": data.get("eval_count", 0)
                     }
-        except Exception as e:
+        except Exception:
             # Fallback path
             pass
 

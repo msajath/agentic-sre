@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class ServiceStatus(str, Enum):
+    UNKNOWN = "UNKNOWN"
     HEALTHY = "HEALTHY"
     DEGRADED = "DEGRADED"
     CRITICAL = "CRITICAL"
@@ -41,6 +42,11 @@ class TelemetryPoint(BaseModel):
 
 
 class HeartbeatPayload(BaseModel):
+    @field_validator("service_name")
+    @classmethod
+    def sanitize_name(cls, value):
+        return value.lower()
+
     service_name: str = Field(..., min_length=2, max_length=64, pattern=r"^[a-zA-Z0-9_\-]+$")
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     status: ServiceStatus = Field(default=ServiceStatus.HEALTHY)

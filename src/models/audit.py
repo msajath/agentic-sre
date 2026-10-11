@@ -1,5 +1,5 @@
 """
-Immutable, Cryptographically Chained Audit Ledger Models.
+Tamper-evident, Cryptographically Chained Audit Ledger Models.
 Every operational event is hashed with its previous entry to form a tamper-evident log chain.
 """
 

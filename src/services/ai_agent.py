@@ -1,11 +1,6 @@
-"""
-Agentic SRE AI Engine (LangGraph & LLM Orchestrator).
-Provides chain-of-thought incident reasoning, hypothesis evaluation, and multi-agent synthesis.
-Gracefully supports Google Gemini, OpenAI, Anthropic, or Ollama, with automated fallback.
-"""
+"""Deterministic rule-based diagnosis of simulated telemetry."""
 
 from datetime import datetime, timezone
-import json
 import os
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
@@ -65,7 +60,7 @@ class SREAgentOrchestrator:
         mitigation_steps = [
             f"1. Human SRE Lead reviews and approves {action.value} plan.",
             f"2. Execute automated containment on container instances for [{diagnosis.root_cause_service}].",
-            f"3. Run automated post-recovery telemetry verification probe across 5 simulation cycles.",
+            "3. Run automated post-recovery telemetry verification probe across 5 simulation cycles.",
             f"4. Confirm error rate drops below 5.0% on both {diagnosis.root_cause_service} and caller services.",
         ]
 

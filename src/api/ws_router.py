@@ -5,7 +5,9 @@ Pushes sub-second telemetry, topology updates, and anomaly alerts.
 
 import asyncio
 import json
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from src.config import settings
+from src.services.auth_service import auth_service
 
 from src.services.anomaly_detector import anomaly_detector
 from src.services.chaos_controller import chaos_controller
@@ -21,9 +23,17 @@ async def websocket_dashboard_endpoint(websocket: WebSocket):
     """
     Continuous bi-directional or push stream for live dashboard telemetry.
     """
+    origin = websocket.headers.get("origin")
+    if origin is not None and origin not in settings.allowed_origins:
+        await websocket.close(code=1008)
+        return
     await websocket.accept()
     try:
+        authentication = await asyncio.wait_for(websocket.receive_json(), timeout=5)
+        token = authentication.get("access_token", "")
+        auth_service.resolve_token(token)
         while True:
+            auth_service.resolve_token(token)
             # 1. Fetch live summaries
             summaries = [s.model_dump(mode="json") for s in telemetry_stream.get_all_summaries()]
             
@@ -57,6 +67,8 @@ async def websocket_dashboard_endpoint(websocket: WebSocket):
 
             await websocket.send_text(json.dumps(payload))
             await asyncio.sleep(1.0)
+    except (HTTPException, asyncio.TimeoutError, ValueError, AttributeError):
+        await websocket.close(code=1008)
     except WebSocketDisconnect:
         # Normal disconnect
         pass

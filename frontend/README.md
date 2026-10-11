@@ -1,16 +1,12 @@
-# React + Vite
+# Agentic SRE dashboard
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Run `npm ci` then `npm run dev` and open http://localhost:5173. The API must run on port 8000;
+Vite proxies `/api` and `/ws`. Provision accounts using the instructions in the repository README.
 
-Currently, two official plugins are available:
+`npm run build` writes `dist`; the backend and combined Docker image serve that build.
+The dashboard defaults to its own origin. Set `VITE_API_BASE_URL` at build time for a separate backend,
+and allow the frontend origin in the API's `ALLOWED_ORIGINS` environment configuration.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+`npm run lint` checks the React code. The application uses real account login, authenticates its
+WebSocket in the first message, and reconnects interrupted telemetry streams. It displays synthetic
+services and simulated recovery actions; evaluation timings measure the isolated harness.

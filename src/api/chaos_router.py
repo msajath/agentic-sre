@@ -4,7 +4,10 @@ Guarantees strictly validated fault parameters to prevent malicious degradation.
 """
 
 from typing import List, Optional
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import Depends, APIRouter, HTTPException, Query, status
+
+from src.models.auth import User, UserRole
+from src.services.auth_service import require_roles
 
 from src.models.audit import AuditEventType
 from src.models.chaos import ActiveFault, ChaosInjectionRequest, FaultType
@@ -15,26 +18,25 @@ router = APIRouter(prefix="/api/v1/chaos", tags=["Chaos Fault Injection"])
 
 
 @router.post("/inject", response_model=ActiveFault, status_code=status.HTTP_201_CREATED)
-async def inject_fault(request: ChaosInjectionRequest):
+async def inject_fault(request: ChaosInjectionRequest, current_user: User = Depends(require_roles([UserRole.ADMIN, UserRole.SRE_LEAD]))):
     """
     Injects a controlled fault into a target service.
     Enforces time-to-live expiration to prevent uncontained outages.
     """
     try:
-        fault = chaos_controller.inject_fault(request)
+        request.injected_by = current_user.username
         audit_service.record_event(
             event_type=AuditEventType.CHAOS_INJECT,
-            actor=request.injected_by,
-            actor_role="SRE_OPERATOR",
+            actor=current_user.username,
+            actor_role=current_user.role.value,
             target_resource=request.service_name,
             action_summary=f"Chaos fault {request.fault_type.value} injected into {request.service_name}",
             details={
                 "magnitude": request.magnitude,
                 "duration_sec": request.duration_sec,
-                "fault_id": fault.fault_id,
             },
         )
-        return fault
+        return chaos_controller.inject_fault(request)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -51,19 +53,21 @@ async def list_active_faults(service_name: Optional[str] = Query(default=None)):
 async def clear_service_faults(
     service_name: str,
     fault_type: Optional[FaultType] = Query(default=None),
+    current_user: User = Depends(require_roles([UserRole.ADMIN, UserRole.SRE_LEAD])),
 ):
     """
     Manually removes injected faults from a service.
     """
-    cleared = chaos_controller.remove_fault(service_name.lower(), fault_type=fault_type)
+    cleared = [f.fault_id for f in chaos_controller.get_active_faults(service_name.lower()) if fault_type is None or f.fault_type == fault_type]
     audit_service.record_event(
         event_type=AuditEventType.CHAOS_CLEAR,
-        actor="sre-operator",
-        actor_role="SRE_OPERATOR",
+        actor=current_user.username,
+        actor_role=current_user.role.value,
         target_resource=service_name,
         action_summary=f"Cleared {len(cleared)} active faults on {service_name}",
         details={"cleared_fault_ids": cleared},
     )
+    chaos_controller.remove_fault(service_name.lower(), fault_type=fault_type)
     return {
         "status": "cleared",
         "service_name": service_name,
@@ -73,18 +77,19 @@ async def clear_service_faults(
 
 
 @router.post("/reset", status_code=status.HTTP_200_OK)
-async def emergency_clear_all():
+async def emergency_clear_all(current_user: User = Depends(require_roles([UserRole.ADMIN, UserRole.SRE_LEAD]))):
     """
     Emergency kill-switch: Clears all active faults immediately.
     """
-    cleared_count = chaos_controller.clear_all_faults()
+    cleared_count = len(chaos_controller.get_active_faults())
     audit_service.record_event(
         event_type=AuditEventType.CHAOS_RESET,
-        actor="sre-operator",
-        actor_role="SRE_OPERATOR",
+        actor=current_user.username,
+        actor_role=current_user.role.value,
         target_resource="cluster-all",
         action_summary=f"Emergency reset triggered: {cleared_count} faults cleared",
         details={"cleared_count": cleared_count},
     )
+    chaos_controller.clear_all_faults()
     return {"status": "all_faults_cleared", "count": cleared_count}
 

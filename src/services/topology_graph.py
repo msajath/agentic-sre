@@ -99,7 +99,6 @@ class TopologyEngine:
         if service_id not in self.graph:
             return []
         # Predecessors in calls graph are callers that depend on this service
-        direct_callers = list(self.graph.predecessors(service_id))
         all_affected: Set[str] = set()
         
         # Traverse reverse graph to find all upstream affected nodes

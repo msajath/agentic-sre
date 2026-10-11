@@ -3,26 +3,24 @@ Unit Tests for Agentic AI Reasoning Orchestrator.
 """
 
 from datetime import datetime, timezone
-import pytest
-from fastapi.testclient import TestClient
 
-from src.main import app
 from src.models.correlation import CausalHop, DiagnosticReport, ForensicEvidence
 from src.models.incident import IncidentSeverity
 from src.models.remediation import RemediationActionType
 from src.services.ai_agent import sre_ai_agent
 from src.services.incident_service import incident_service
 
-client = TestClient(app)
 
 
-def test_ai_status_endpoint():
+
+def test_ai_status_endpoint(client):
     """Verify AI status endpoint responds with operational agent info."""
     response = client.get("/api/v1/ai/status")
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "operational"
-    assert data["chain_of_thought_enabled"] is True
+    assert data["chain_of_thought_enabled"] is False
+    assert data["diagnostic_explanation_enabled"] is True
     assert data["human_in_the_loop_checkpoint"] is True
 
 
@@ -60,7 +58,7 @@ def test_ai_agent_reasoning_orchestrator():
     assert hypothesis.recommended_action == RemediationActionType.RESTART_SERVICE
 
 
-def test_ai_analyze_incident_api():
+def test_ai_analyze_incident_api(client):
     """Verify API endpoint triggers AI reasoning on incident."""
     inc = incident_service.create_incident(
         title="Payment Gateway Timeout",

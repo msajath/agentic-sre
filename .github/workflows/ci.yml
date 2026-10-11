@@ -7,8 +7,8 @@ on:
     branches: [ main ]
 
 jobs:
-  test-and-lint:
-    name: Run Automated Test Suite & Security Audit
+  lint-and-security:
+    name: Check Python and Security
     runs-on: ubuntu-latest
 
     steps:
@@ -24,21 +24,75 @@ jobs:
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install bandit flake8
+          pip install -r requirements-dev.txt
 
       - name: Run Security Audit (Bandit)
         run: |
           bandit -r src/ -ll -ii
 
-      - name: Run Pytest Test Suite
-        run: |
-          pytest -v --maxfail=1
+      - name: Check Python Imports and Undefined Names
+        run: python -m flake8 src scripts tests --select=F
+
+  postgres-checks:
+    name: Test Backend with PostgreSQL and Prisma
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: sre_ci
+          POSTGRES_PASSWORD: isolated-ci-database-password
+          POSTGRES_DB: agentic_sre_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sre_ci -d agentic_sre_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://sre_ci:isolated-ci-database-password@127.0.0.1:5432/agentic_sre_test
+      TEST_DATABASE_URL: postgresql://sre_ci:isolated-ci-database-password@127.0.0.1:5432/agentic_sre_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: pip install -r requirements-dev.txt
+      - run: npm ci
+      - run: npm run db:validate
+      - run: npm run db:generate
+      - run: npm run db:typecheck
+      - run: npm run db:migrate
+      - run: npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code
+      - run: npm run db:check
+      - run: python scripts/test_postgres.py
+
+  frontend-checks:
+    name: Validate Dashboard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - run: npm run lint -- --deny-warnings
+        working-directory: frontend
+      - run: npm run build
+        working-directory: frontend
 
   docker-build:
     name: Build & Validate Docker Container
     runs-on: ubuntu-latest
-    needs: test-and-lint
+    needs: [lint-and-security, postgres-checks, frontend-checks]
 
     steps:
       - name: Checkout Repository
@@ -52,4 +106,37 @@ jobs:
         with:
           context: .
           push: false
-          tags: agentic-sre:latest
+          load: true
+          tags: agentic-sre:0.1.0
+
+      - name: Build Prisma Migration Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          target: database
+          push: false
+          load: true
+          tags: agentic-sre-database:0.1.0
+
+      - name: Smoke Test PostgreSQL Stack
+        shell: bash
+        run: |
+          export SECRET_KEY="$(openssl rand -hex 32)"
+          export BOOTSTRAP_ADMIN_PASSWORD="$(openssl rand -hex 24)"
+          export POSTGRES_PASSWORD="$(openssl rand -hex 24)"
+          export DOCKER_DATABASE_URL="postgresql://agentic_sre:${POSTGRES_PASSWORD}@postgres:5432/agentic_sre"
+          trap 'docker compose logs; docker compose down -v' EXIT
+          docker compose up -d --no-build
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:8000/readyz; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://localhost:8000/readyz
+          curl --fail --silent http://localhost:8000/ | grep -q '<html'
+          python - <<'PY'
+          import json, os, urllib.request
+          body = json.dumps({"username": "admin", "password": os.environ["BOOTSTRAP_ADMIN_PASSWORD"]}).encode()
+          request = urllib.request.Request("http://localhost:8000/api/v1/auth/login", data=body, headers={"Content-Type": "application/json"})
+          with urllib.request.urlopen(request) as response:
+              assert json.load(response)["access_token"]
+          PY

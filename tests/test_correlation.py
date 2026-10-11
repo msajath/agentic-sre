@@ -3,12 +3,10 @@ Unit & Integration Tests for Event Correlation, Causal Path Traversal, and Depen
 """
 
 from datetime import datetime, timezone
-import pytest
 
 from src.models.correlation import AlertEvent
 from src.models.incident import IncidentSeverity
 from src.services.diagnosis_engine import diagnosis_engine
-from src.services.event_correlator import event_correlator
 
 
 def test_correlate_cascading_alerts():

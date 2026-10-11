@@ -14,7 +14,9 @@ from src.config import settings
 
 
 class AnomalyDetector:
-    def __init__(self):
+    def __init__(self, telemetry=None, persist_incidents=True):
+        self.telemetry_stream = telemetry or telemetry_stream
+        self.persist_incidents = persist_incidents
         self._active_anomalies: List[AnomalyReport] = []
 
     def evaluate_cluster_health(self) -> List[AnomalyReport]:
@@ -23,7 +25,7 @@ class AnomalyDetector:
         """
         anomalies: List[AnomalyReport] = []
         now = datetime.now(timezone.utc)
-        summaries = telemetry_stream.get_all_summaries()
+        summaries = self.telemetry_stream.get_all_summaries()
 
         for summary in summaries:
             # 1. Error Rate Anomaly
@@ -56,6 +58,12 @@ class AnomalyDetector:
                     )
                 )
 
+            for metric, value in (("cpu_usage", summary.cpu_usage_pct), ("memory_usage", summary.memory_usage_pct)):
+                if value >= 90:
+                    anomalies.append(AnomalyReport(service_name=summary.service_name, metric_type=metric,
+                        observed_value=value, threshold_value=90, description=f"{metric} reached {value}%",
+                        detected_at=now, severity=IncidentSeverity.HIGH))
+
             # 3. Complete Service Outage
             if summary.status == ServiceStatus.DOWN:
                 anomalies.append(
@@ -82,7 +90,7 @@ class AnomalyDetector:
         if not anomalies:
             return None
 
-        affected_services = list({a.service_name for a in anomalies})
+        affected_services = sorted({a.service_name for a in anomalies})
         
         # Determine root cause candidate:
         # A service that does NOT depend on any other currently degraded service is the root!
@@ -105,7 +113,7 @@ class AnomalyDetector:
             elif a.severity == IncidentSeverity.HIGH:
                 highest_severity = IncidentSeverity.HIGH
 
-        return IncidentRecord(
+        candidate = IncidentRecord(
             title=f"Cascading Degradation Originating from [{root_candidate}]" if len(affected_services) > 1 else f"Service Degraded: [{root_candidate}]",
             description=f"{len(anomalies)} anomalies detected across {len(affected_services)} services. Blast radius: {', '.join(affected_services)}",
             state=IncidentState.DETECTED,
@@ -114,6 +122,10 @@ class AnomalyDetector:
             affected_services=affected_services,
             anomalies=anomalies,
         )
+        if self.persist_incidents:
+            from src.services.incident_service import incident_service
+            return incident_service.capture_detection(candidate)
+        return candidate
 
 
 anomaly_detector = AnomalyDetector()

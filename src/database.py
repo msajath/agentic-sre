@@ -1,52 +1,55 @@
 """
-Production-Grade SQLite Database Layer with SQLAlchemy 2.0.
+PostgreSQL storage for a single-process simulation platform.
 Ensures persistent, tamper-evident storage for incidents, audit ledgers, users, and remediations.
-Enforces Write-Ahead Logging (WAL) and foreign keys for high-concurrency ACID transactions.
+Prisma migrations own the database schema.
 """
 
 from datetime import datetime, timezone
-import json
 import os
-from pathlib import Path
 from typing import Generator
 
 from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
-    Float,
-    Index,
-    Integer,
     String,
     Text,
     create_engine,
-    event,
+    inspect,
+    text,
 )
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import URL, make_url
+from sqlalchemy.exc import ArgumentError
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
+from src import environment  # noqa: F401 - load local configuration before reading variables
 
-# Data Directory
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-DB_PATH = DATA_DIR / "sre_platform.db"
-DATABASE_URL = os.getenv("DATABASE_URL") or f"sqlite:///{DB_PATH}"
+def parse_database_url(value: str | None) -> URL:
+    """Require an explicit PostgreSQL connection; never create a fallback database."""
+    if not value or not value.strip():
+        raise ValueError("DATABASE_URL is required. Set it to your PostgreSQL connection URL.")
+    try:
+        database_url = make_url(value)
+    except (ArgumentError, ValueError, TypeError):
+        raise ValueError("DATABASE_URL must be a valid PostgreSQL connection URL.") from None
+    if database_url.drivername in {"postgres", "postgresql"}:
+        database_url = database_url.set(drivername="postgresql+psycopg")
+    if database_url.drivername != "postgresql+psycopg":
+        raise ValueError("DATABASE_URL must use PostgreSQL (postgresql://).")
+    if not database_url.database:
+        raise ValueError("DATABASE_URL must name a PostgreSQL database.")
+    return database_url
+
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+database_url = parse_database_url(DATABASE_URL)
 
 # SQLAlchemy Engine
 engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False},
+    database_url,
+    connect_args={"connect_timeout": 10, "options": "-c timezone=UTC"},
+    pool_pre_ping=True,
     echo=False,
 )
-
-
-# Enable SQLite WAL mode and foreign key constraints for production performance & integrity
-@event.listens_for(Engine, "connect")
-def set_sqlite_pragma(dbapi_connection, connection_record):
-    cursor = dbapi_connection.cursor()
-    cursor.execute("PRAGMA journal_mode=WAL")
-    cursor.execute("PRAGMA synchronous=NORMAL")
-    cursor.execute("PRAGMA foreign_keys=ON")
-    cursor.close()
 
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -116,9 +119,22 @@ class RemediationPlanModel(Base):
     recovery_verification_notes = Column(Text, nullable=True)
 
 
+class PlatformRecordModel(Base):
+    __tablename__ = "platform_records"
+    key = Column(String(128), primary_key=True)
+    payload = Column(Text, nullable=False)
+
+
 def init_db():
-    """Initializes tables and confirms database accessibility."""
-    Base.metadata.create_all(bind=engine)
+    """Require the PostgreSQL schema created by Prisma migrations."""
+    missing = set(Base.metadata.tables) - set(inspect(engine).get_table_names())
+    if missing:
+        raise RuntimeError("PostgreSQL schema is not initialized. Run npm run db:migrate before starting the API.")
+
+
+def lock_audit_chain(session):
+    """Serialize chain appends until commit, including writes from other connections."""
+    session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": 731904260101})
 
 
 def get_db() -> Generator[Session, None, None]:

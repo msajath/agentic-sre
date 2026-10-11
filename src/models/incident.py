@@ -49,7 +49,7 @@ class AnomalyReport(BaseModel):
 
 
 class IncidentRecord(BaseModel):
-    incident_id: str = Field(default_factory=lambda: f"INC-{str(uuid4())[:6].upper()}")
+    incident_id: str = Field(default_factory=lambda: f"INC-{uuid4().hex[:16].upper()}")
     title: str
     description: str
     state: IncidentState = IncidentState.DETECTED

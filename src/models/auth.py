@@ -4,7 +4,6 @@ Protects sensitive platform actions behind strict cryptographic tokens and scope
 """
 
 from enum import Enum
-from typing import Optional
 from pydantic import BaseModel, EmailStr, Field
 
 

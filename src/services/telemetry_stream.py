@@ -5,7 +5,7 @@ Guarantees high throughput and bounded memory usage via fixed-size circular dequ
 
 from collections import deque
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from typing import Dict, List
 import threading
 
 from src.models.telemetry import (
@@ -19,7 +19,8 @@ from src.config import settings
 
 
 class TelemetryStream:
-    def __init__(self, window_size: int = settings.telemetry_window_size):
+    def __init__(self, window_size: int = settings.telemetry_window_size, chaos=None):
+        self.chaos_controller = chaos or chaos_controller
         self.window_size = window_size
         self._lock = threading.Lock()
         # Per-service rolling windows of raw telemetry points
@@ -35,11 +36,13 @@ class TelemetryStream:
         """Appends a validated telemetry data point."""
         with self._lock:
             if point.service_name not in self._history:
-                self._history[point.service_name] = deque(maxlen=self.window_size)
+                raise ValueError("Service is not managed by this platform.")
             self._history[point.service_name].append(point)
 
     def record_heartbeat(self, heartbeat: HeartbeatPayload) -> None:
         """Records a service heartbeat timestamp and health status."""
+        if heartbeat.service_name not in self._history:
+            raise ValueError("Service is not managed by this platform.")
         with self._lock:
             self._last_heartbeat[heartbeat.service_name] = heartbeat
 
@@ -55,21 +58,21 @@ class TelemetryStream:
             points = list(self._history.get(service_name, []))
             hb = self._last_heartbeat.get(service_name)
 
-        active_faults = chaos_controller.get_active_faults(service_name)
+        active_faults = self.chaos_controller.get_active_faults(service_name)
         fault_names = [f.fault_type.value for f in active_faults]
 
         total_requests = len(points)
         if total_requests == 0:
             return ServiceMetricsSummary(
                 service_name=service_name,
-                status=ServiceStatus.HEALTHY if not active_faults else ServiceStatus.DEGRADED,
+                status=ServiceStatus.UNKNOWN,
                 total_requests=0,
                 error_count=0,
                 error_rate=0.0,
-                avg_latency_ms=15.0,
-                p95_latency_ms=25.0,
-                cpu_usage_pct=10.0,
-                memory_usage_pct=20.0,
+                avg_latency_ms=0.0,
+                p95_latency_ms=0.0,
+                cpu_usage_pct=0.0,
+                memory_usage_pct=0.0,
                 active_faults=fault_names,
                 last_heartbeat=hb.timestamp if hb else None,
             )
@@ -86,12 +89,16 @@ class TelemetryStream:
         avg_cpu = sum(p.cpu_usage_pct for p in points) / total_requests
         avg_mem = sum(p.memory_usage_pct for p in points) / total_requests
 
-        # Determine health status based on metrics & faults
-        if any(f.fault_type.value == "SERVICE_CRASH" for f in active_faults):
+        # Heartbeats expire instead of leaving stale services healthy.
+        if not hb or (datetime.now(timezone.utc) - hb.timestamp).total_seconds() > settings.heartbeat_interval_sec * 3:
+            status = ServiceStatus.UNKNOWN
+        elif hb.status == ServiceStatus.DOWN or hb.active_instances == 0:
+            status = ServiceStatus.DOWN
+        elif any(f.fault_type.value == "SERVICE_CRASH" for f in active_faults):
             status = ServiceStatus.DOWN
         elif error_rate > 0.40 or p95_latency > 3000.0:
             status = ServiceStatus.CRITICAL
-        elif error_rate > settings.anomaly_error_rate_threshold or p95_latency > settings.anomaly_latency_p95_ms:
+        elif error_rate > settings.anomaly_error_rate_threshold or p95_latency > settings.anomaly_latency_p95_ms or avg_cpu >= 90 or avg_mem >= 90:
             status = ServiceStatus.DEGRADED
         else:
             status = ServiceStatus.HEALTHY

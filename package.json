@@ -1,0 +1,34 @@
+{
+  "name": "agentic-sre-database",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.12.0" },
+  "scripts": {
+    "db:validate": "prisma validate",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate deploy",
+    "db:migrate:dev": "prisma migrate dev",
+    "db:status": "prisma migrate status",
+    "db:studio": "prisma studio --browser none",
+    "db:check": "tsx scripts/check-database.ts",
+    "db:typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "7.9.0",
+    "@prisma/client": "7.9.0",
+    "dotenv": "18.0.7",
+    "pg": "8.23.1"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "@types/pg": "8.15.6",
+    "prisma": "7.9.0",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3"
+  },
+  "overrides": {
+    "@prisma/config": { "deepmerge-ts": "8.0.0" },
+    "@prisma/dev": { "find-my-way": "9.10.0", "valibot": "1.5.0" },
+    "prisma": { "mysql2": "3.24.5" }
+  }
+}

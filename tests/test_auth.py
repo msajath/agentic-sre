@@ -11,7 +11,7 @@ from src.services.auth_service import auth_service
 def test_password_authentication():
     """Verify PBKDF2 salted hash validation."""
     # Valid credentials
-    user = auth_service.authenticate_user("admin", "AdminSre@2026")
+    user = auth_service.authenticate_user("admin", "test-admin-credential-2026")
     assert user is not None
     assert user.username == "admin"
     assert user.role == UserRole.ADMIN
@@ -20,7 +20,7 @@ def test_password_authentication():
     assert auth_service.authenticate_user("admin", "WrongPassword") is None
 
     # Non-existent user
-    assert auth_service.authenticate_user("nonexistent", "AdminSre@2026") is None
+    assert auth_service.authenticate_user("nonexistent", "test-admin-credential-2026") is None
 
 
 def test_jwt_token_creation_and_verification():

@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import './index.css';
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || window.location.origin).replace(/\/$/, "");
+const roleNames = { ADMIN: "admin", SRE_LEAD: "lead", OPERATOR: "operator", VIEWER: "viewer" };
 
 const nodePositions = {
   "auth-service": { x: 120, y: 55 },
@@ -11,17 +12,16 @@ const nodePositions = {
   "notification-service": { x: 620, y: 150 }
 };
 
-const userCredentials = {
-  admin: { role: "admin", label: "Cluster Administrator", perm: "Full Cluster & Mutation Access" },
-  lead: { role: "lead", label: "SRE Lead", perm: "Remediation Approvals & Chaos Controls" },
-  operator: { role: "operator", label: "Site Reliability Engineer", perm: "Triage, Diagnostics & Propose" },
-  viewer: { role: "viewer", label: "Security & Compliance Auditor", perm: "Read-Only Observability" }
-};
-
 export default function App() {
-  const [theme, setTheme] = useState('humanized');
-  const [role, setRole] = useState('operator');
+  const theme = 'humanized';
+  const [role, setRole] = useState('anonymous');
   const [token, setToken] = useState(null);
+  const [username, setUsername] = useState('');
+  const [loginName, setLoginName] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [loginBusy, setLoginBusy] = useState(false);
+  const [apiError, setApiError] = useState('');
   const [activeTab, setActiveTab] = useState('overview');
   const [wsStatus, setWsStatus] = useState('CONNECTING');
 
@@ -38,6 +38,7 @@ export default function App() {
   const [remediationPlans, setRemediationPlans] = useState([]);
   const [auditLogs, setAuditLogs] = useState([]);
   const [auditVerification, setAuditVerification] = useState(null);
+  const [legacyAudit, setLegacyAudit] = useState(null);
 
   // Extended Data Collections
   const [benchmarkData, setBenchmarkData] = useState({ metrics: null, scenarios: [] });
@@ -56,14 +57,14 @@ export default function App() {
 
   // Chaos Form
   const [chaosService, setChaosService] = useState('payment-service');
-  const [chaosType, setChaosType] = useState('LATENCY_SPIKE');
+  const [chaosType, setChaosType] = useState('LATENCY');
   const [chaosMagnitude, setChaosMagnitude] = useState(1.0);
   const [chaosDuration, setChaosDuration] = useState(30);
   const [chaosStatusMsg, setChaosStatusMsg] = useState(null);
 
   // Modals & Utilities
   const [modalConfig, setModalConfig] = useState(null);
-  const [showLoginModal, setShowLoginModal] = useState(false);
+  const [showLoginModal, setShowLoginModal] = useState(true);
   const [showTourModal, setShowTourModal] = useState(false);
   const [show403Screen, setShow403Screen] = useState(false);
 
@@ -72,126 +73,151 @@ export default function App() {
     document.body.setAttribute('data-theme', theme);
   }, [theme]);
 
-  // 2. Authentication Helper
-  const loginUser = useCallback(async (selectedRole) => {
-    const password = `${selectedRole.charAt(0).toUpperCase() + selectedRole.slice(1)}Sre@2026`;
+  const clearSession = useCallback(() => {
+    setToken(null); setRole('anonymous'); setUsername('');
+    setServices([]); setEdges([]); setIncident(null); setDiagnosis(null);
+    setActiveFaults([]); setIncidentsList([]); setRemediationPlans([]); setAuditLogs([]);
+    setAiAnalysis(null); setSelectedIncidentDetail(null); setAuditVerification(null);
+    setLegacyAudit(null);
+    setBenchmarkData({ metrics: null, scenarios: [] }); setSelectedScenarioReplay(null);
+    setKnowledgeDocs([]); setRagSearchResults(null); setAgentsList([]);
+    setServicesCatalog([]); setPlatformSettings(null); setShowLoginModal(true);
+  }, []);
+
+  const getAuthHeaders = useCallback(() => ({
+    'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  }), [token]);
+
+  const apiFetch = useCallback(async (path, options = {}) => {
     try {
-      const res = await fetch(`${API_BASE}/api/v1/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: selectedRole, password })
+      const response = await fetch(`${API_BASE}${path}`, { ...options, headers: { ...getAuthHeaders(), ...options.headers } });
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        if (response.status === 401) clearSession();
+        const detail = Array.isArray(error.detail) ? error.detail.map(item => item.msg).join('; ') : error.detail;
+        throw new Error(detail || `Request failed (${response.status})`);
+      }
+      setApiError('');
+      return response;
+    } catch (error) { setApiError(error.message); throw error; }
+  }, [getAuthHeaders, clearSession]);
+
+  const handleLogin = async (event) => {
+    event.preventDefault(); setLoginBusy(true); setLoginError('');
+    try {
+      const response = await fetch(`${API_BASE}/api/v1/auth/login`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: loginName, password: loginPassword }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        setToken(data.access_token);
-      }
-    } catch (err) {
-      console.warn("Auto-login warning:", err);
-    }
-  }, []);
+      const data = await response.json();
+      if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Sign in failed.');
+      clearSession(); setRole(roleNames[data.role]); setUsername(data.username); setToken(data.access_token);
+      setLoginPassword(''); setApiError(''); setShow403Screen(false); setShowLoginModal(false);
+    } catch (error) { setLoginError(error.message); }
+    finally { setLoginBusy(false); }
+  };
 
   useEffect(() => {
-    loginUser(role);
-  }, [role, loginUser]);
-
-  const getAuthHeaders = useCallback(() => {
-    const headers = { "Content-Type": "application/json" };
-    if (token) headers["Authorization"] = `Bearer ${token}`;
-    return headers;
-  }, [token]);
-
-  // 3. Telemetry WebSocket
-  useEffect(() => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//localhost:8000/ws/dashboard`;
-    let ws = new WebSocket(wsUrl);
-
-    ws.onopen = () => setWsStatus('STREAM LIVE');
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === "TELEMETRY_SNAPSHOT") {
-          setServices(data.services || []);
-          setEdges(data.edges || []);
-          setIncident(data.incident || null);
-          setDiagnosis(data.diagnosis || null);
-          if (data.active_faults) setActiveFaults(data.active_faults);
-        }
-      } catch (err) {
-        console.error("Telemetry parse error:", err);
-      }
+    if (!token) return;
+    let socket;
+    let retry;
+    let stopped = false;
+    const url = new URL('/ws/dashboard', API_BASE);
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+    const connect = () => {
+      socket = new WebSocket(url);
+      socket.onopen = () => socket.send(JSON.stringify({ access_token: token }));
+      socket.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === 'TELEMETRY_SNAPSHOT') {
+            setWsStatus('STREAM LIVE'); setServices(data.services || []); setEdges(data.edges || []);
+            setIncident(data.incident || null); setDiagnosis(data.diagnosis || null); setActiveFaults(data.active_faults || []);
+          }
+        } catch (error) { setApiError(`Telemetry parse error: ${error.message}`); }
+      };
+      socket.onclose = (event) => {
+        if (stopped) return;
+        setWsStatus('RECONNECTING');
+        if (event.code === 1008) { clearSession(); return; }
+        retry = setTimeout(connect, 2000);
+      };
     };
-    ws.onclose = () => setWsStatus('RECONNECTING');
-    return () => ws.close();
-  }, []);
+    connect();
+    return () => { stopped = true; clearTimeout(retry); if (socket) socket.close(); };
+  }, [token, clearSession]);
 
   // 4. Data Fetch Handlers
   const fetchIncidents = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/v1/incidents`);
+      const res = await apiFetch(`/api/v1/incidents`);
       if (res.ok) setIncidentsList(await res.json());
     } catch (e) { console.error(e); }
-  }, []);
+  }, [apiFetch]);
 
   const fetchRemediationPlans = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/v1/remediation/plans`);
+      const res = await apiFetch(`/api/v1/remediation/plans`);
       if (res.ok) setRemediationPlans(await res.json());
     } catch (e) { console.error(e); }
-  }, []);
+  }, [apiFetch]);
 
   const fetchAuditLogs = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/v1/audit/logs?limit=50`);
-      if (res.ok) setAuditLogs(await res.json());
+      const [logs, legacy] = await Promise.all([
+        apiFetch(`/api/v1/audit/logs?limit=50`).then(res => res.json()),
+        apiFetch(`/api/v1/audit/legacy?limit=50`).then(res => res.json()),
+      ]);
+      setAuditLogs(logs); setLegacyAudit(legacy); setAuditVerification(null);
     } catch (e) { console.error(e); }
-  }, []);
+  }, [apiFetch]);
 
   const fetchActiveFaults = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/v1/chaos/faults`);
+      const res = await apiFetch(`/api/v1/chaos/faults`);
       if (res.ok) setActiveFaults(await res.json());
     } catch (e) { console.error(e); }
-  }, []);
+  }, [apiFetch]);
 
   const fetchBenchmarks = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/v1/evaluations/benchmarks`);
+      const res = await apiFetch(`/api/v1/evaluations/benchmarks`);
       if (res.ok) setBenchmarkData(await res.json());
     } catch (e) { console.error(e); }
-  }, []);
+  }, [apiFetch]);
 
   const fetchKnowledge = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/v1/knowledge/documents`);
+      const res = await apiFetch(`/api/v1/knowledge/documents`);
       if (res.ok) setKnowledgeDocs(await res.json());
     } catch (e) { console.error(e); }
-  }, []);
+  }, [apiFetch]);
 
   const fetchAgents = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/v1/agents`);
+      const res = await apiFetch(`/api/v1/agents`);
       if (res.ok) setAgentsList(await res.json());
     } catch (e) { console.error(e); }
-  }, []);
+  }, [apiFetch]);
 
   const fetchServicesCatalog = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/v1/services/catalog`);
+      const res = await apiFetch(`/api/v1/services/catalog`);
       if (res.ok) setServicesCatalog(await res.json());
     } catch (e) { console.error(e); }
-  }, []);
+  }, [apiFetch]);
 
   const fetchSettings = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/v1/settings`);
+      const res = await apiFetch(`/api/v1/settings`);
       if (res.ok) setPlatformSettings(await res.json());
     } catch (e) { console.error(e); }
-  }, []);
+  }, [apiFetch]);
 
   // Sync on tab change
   useEffect(() => {
-    setShow403Screen(false);
+    if (!token) return;
+    const sync = () => {
     if (activeTab === 'incidents') fetchIncidents();
     else if (activeTab === 'approvals') fetchRemediationPlans();
     else if (activeTab === 'evaluations') fetchBenchmarks();
@@ -201,14 +227,18 @@ export default function App() {
     else if (activeTab === 'chaos') fetchActiveFaults();
     else if (activeTab === 'audit') fetchAuditLogs();
     else if (activeTab === 'settings') fetchSettings();
-  }, [activeTab, fetchIncidents, fetchRemediationPlans, fetchBenchmarks, fetchServicesCatalog, fetchAgents, fetchKnowledge, fetchActiveFaults, fetchAuditLogs, fetchSettings]);
+    };
+    // Schedule external synchronization after navigation; cancel queued work on tab changes.
+    const timer = setTimeout(sync, 0);
+    return () => clearTimeout(timer);
+  }, [token, activeTab, fetchIncidents, fetchRemediationPlans, fetchBenchmarks, fetchServicesCatalog, fetchAgents, fetchKnowledge, fetchActiveFaults, fetchAuditLogs, fetchSettings]);
 
   // Modal helpers
   const openModal = (config) => setModalConfig(config);
   const closeModal = () => setModalConfig(null);
 
   // RBAC Permission Check
-  const requireRole = (allowedRoles, actionName) => {
+  const requireRole = (allowedRoles, _actionName) => {
     if (!allowedRoles.includes(role)) {
       setShow403Screen(true);
       return false;
@@ -222,7 +252,7 @@ export default function App() {
     if (!requireRole(['admin', 'lead'], 'Inject Chaos Fault')) return;
     setChaosStatusMsg("Injecting deliberate failure...");
     try {
-      const resp = await fetch(`${API_BASE}/api/v1/chaos/inject`, {
+      const resp = await apiFetch(`/api/v1/chaos/inject`, {
         method: "POST",
         headers: getAuthHeaders(),
         body: JSON.stringify({
@@ -249,7 +279,7 @@ export default function App() {
   const clearFault = async (serviceName, faultType) => {
     if (!requireRole(['admin', 'lead'], 'Clear Fault')) return;
     try {
-      await fetch(`${API_BASE}/api/v1/chaos/faults/${serviceName}?fault_type=${faultType}`, { method: "DELETE" });
+      await apiFetch(`/api/v1/chaos/faults/${serviceName}?fault_type=${faultType}`, { method: "DELETE" });
       fetchActiveFaults();
       fetchAuditLogs();
     } catch (err) { console.error(err); }
@@ -264,11 +294,11 @@ export default function App() {
       isDanger: true,
       onConfirm: async () => {
         try {
-          await fetch(`${API_BASE}/api/v1/chaos/reset`, { method: "POST" });
+          await apiFetch(`/api/v1/chaos/reset`, { method: "POST" });
           fetchActiveFaults();
           fetchAuditLogs();
           closeModal();
-        } catch (err) { closeModal(); }
+        } catch (err) { console.error(err); closeModal(); }
       }
     });
   };
@@ -277,21 +307,22 @@ export default function App() {
   const handleReplayBenchmark = async (scenarioId) => {
     setReplayLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/api/v1/evaluations/replay/${scenarioId}`, { method: "POST" });
+      const res = await apiFetch(`/api/v1/evaluations/replay/${scenarioId}`, { method: "POST" });
       if (res.ok) {
         const rep = await res.json();
         setSelectedScenarioReplay(rep);
+        fetchBenchmarks();
       }
     } catch (e) { console.error(e); }
     finally { setReplayLoading(false); }
   };
 
-  // RAG Search Action
+  // Local Runbook Search
   const handleSearchRag = async (e) => {
     e.preventDefault();
     if (!ragQuery.trim()) return;
     try {
-      const res = await fetch(`${API_BASE}/api/v1/knowledge/search?query=${encodeURIComponent(ragQuery)}`);
+      const res = await apiFetch(`/api/v1/knowledge/search?query=${encodeURIComponent(ragQuery)}`);
       if (res.ok) setRagSearchResults(await res.json());
     } catch (e) { console.error(e); }
   };
@@ -300,10 +331,10 @@ export default function App() {
   const handleApprovePlan = async (planId) => {
     if (!requireRole(['admin', 'lead'], 'Approve Remediation Plan')) return;
     try {
-      const res = await fetch(`${API_BASE}/api/v1/remediation/plans/${planId}/approve`, {
+      const res = await apiFetch(`/api/v1/remediation/plans/${planId}/approve`, {
         method: "POST",
         headers: getAuthHeaders(),
-        body: JSON.stringify({ rationale: `Approved by SRE ${role}` })
+        body: JSON.stringify({ reason: `Approved by ${username}` })
       });
       if (res.ok) {
         fetchRemediationPlans();
@@ -327,7 +358,7 @@ export default function App() {
       onConfirm: async (reason) => {
         if (!reason) return closeModal();
         try {
-          const res = await fetch(`${API_BASE}/api/v1/remediation/plans/${planId}/reject`, {
+          const res = await apiFetch(`/api/v1/remediation/plans/${planId}/reject`, {
             method: "POST",
             headers: getAuthHeaders(),
             body: JSON.stringify({ reason })
@@ -344,10 +375,12 @@ export default function App() {
 
   // AI Diagnosis
   const handleRunAiDiagnosis = async () => {
-    const incId = (incident && incident.incident_id) || `INC-${Date.now().toString().slice(-4)}`;
+    if (!requireRole(['admin', 'lead', 'operator'], 'Diagnose incident')) return;
+    const incId = selectedIncidentDetail?.incident_id || incident?.incident_id;
+    if (!incId) { setApiError('Select an existing incident before running diagnosis.'); return; }
     setAiLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/api/v1/ai/analyze-incident/${incId}`, {
+      const res = await apiFetch(`/api/v1/ai/analyze-incident/${incId}`, {
         method: "POST",
         headers: getAuthHeaders()
       });
@@ -357,6 +390,15 @@ export default function App() {
       }
     } catch (err) { console.error(err); }
     finally { setAiLoading(false); }
+  };
+
+  const handleProposePlan = async () => {
+    if (!requireRole(['admin', 'lead', 'operator'], 'Propose remediation')) return;
+    if (!aiAnalysis?.incidentId) return;
+    try {
+      await apiFetch(`/api/v1/remediation/auto-propose/${aiAnalysis.incidentId}`, { method: 'POST' });
+      await fetchRemediationPlans(); setActiveTab('approvals');
+    } catch (error) { console.error(error); }
   };
 
   // Calculations
@@ -381,7 +423,7 @@ export default function App() {
                 Agentic SRE
                 <span className="brand-badge">Sentinel Platform</span>
               </h1>
-              <p>Autonomous Incident Management & Self-Healing Mesh</p>
+              <p>Simulated incident management with human-approved recovery</p>
             </div>
           </div>
 
@@ -399,7 +441,7 @@ export default function App() {
               style={{ fontSize: '0.72rem', padding: '0.25rem 0.55rem' }}
               onClick={() => setShowLoginModal(true)}
             >
-              Switch User ({role})
+              {token ? `${username} (${role})` : 'Sign in'}
             </button>
 
             <button 
@@ -427,8 +469,8 @@ export default function App() {
             { id: 'approvals', label: 'Approvals', badge: remediationPlans.filter(p => p.state === 'PENDING_APPROVAL').length || null, core: true },
             { id: 'evaluations', label: 'Evaluations', badge: null, core: true },
             { id: 'services', label: 'Services', badge: null },
-            { id: 'agents', label: 'Agents', badge: '7' },
-            { id: 'knowledge', label: 'Knowledge (RAG)', badge: null },
+            { id: 'agents', label: 'Workflow', badge: agentsList.length || null },
+            { id: 'knowledge', label: 'Runbooks', badge: null },
             { id: 'chaos', label: 'Chaos', badge: activeFaults.length || null },
             { id: 'audit', label: 'Audit Log', badge: null },
             { id: 'settings', label: 'Settings', badge: null }
@@ -436,7 +478,7 @@ export default function App() {
             <button
               key={tab.id}
               className={`nav-tab-btn ${activeTab === tab.id ? 'active' : ''}`}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => { setShow403Screen(false); setActiveTab(tab.id); }}
               style={tab.core ? { fontWeight: 700 } : {}}
             >
               {tab.label}
@@ -457,6 +499,7 @@ export default function App() {
         </nav>
       </header>
 
+      {apiError && <div role="alert" style={{padding: '1rem 2rem', color: '#ef4444'}}>{apiError}</div>}
       {/* Active Incident Broadcast Banner */}
       {incident && (
         <div className="incident-banner active" style={{ margin: '1rem 2rem 0 2rem' }}>
@@ -493,7 +536,7 @@ export default function App() {
             </p>
             <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center' }}>
               <button className="btn btn-secondary" onClick={() => setShow403Screen(false)}>Return to Console</button>
-              <button className="btn btn-primary" onClick={() => { setRole('lead'); setShow403Screen(false); }}>Elevate to SRE Lead</button>
+              <button className="btn btn-primary" onClick={() => { setShowLoginModal(true); setShow403Screen(false); }}>Sign in with another account</button>
             </div>
           </div>
         ) : (
@@ -680,7 +723,7 @@ export default function App() {
                             {diagnosis.explanation}
                           </div>
                           <div style={{marginTop: '0.35rem', fontSize: '0.72rem', color: 'var(--text-muted)'}}>
-                            Blast Radius: {(diagnosis.affected_services || []).join(', ') || 'Isolated'}
+                            Blast Radius: {(diagnosis.cascading_symptoms || []).join(', ') || 'Isolated'}
                           </div>
                         </div>
                       ) : (
@@ -701,13 +744,13 @@ export default function App() {
                             Agentic AI SRE Assistant
                           </div>
                           <div style={{fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.15rem'}}>
-                            LangGraph Multi-Agent Telemetry Synthesis
+                            Deterministic diagnosis from simulated telemetry
                           </div>
                         </div>
                         <button 
                           className="btn btn-purple" 
                           style={{padding: '0.3rem 0.75rem', fontSize: '0.75rem'}}
-                          disabled={aiLoading}
+                          disabled={aiLoading || (!incident && !selectedIncidentDetail)}
                           onClick={handleRunAiDiagnosis}
                         >
                           {aiLoading ? 'Synthesizing...' : 'Run AI Diagnosis'}
@@ -729,12 +772,12 @@ export default function App() {
                                 </div>
                               </div>
                               <span style={{background: 'rgba(124, 58, 237, 0.1)', color: 'var(--accent-purple)', fontWeight: 700, fontSize: '0.72rem', padding: '0.2rem 0.55rem', borderRadius: '4px', border: '1px solid rgba(124, 58, 237, 0.25)'}}>
-                                {Math.round((aiAnalysis.confidence || 0.95) * 100)}% Confidence
+                                {Math.round((aiAnalysis.confidence ?? 0) * 100)}% Heuristic Score
                               </span>
                             </div>
 
                             <div style={{marginBottom: '0.85rem'}}>
-                              <div style={{fontSize: '0.72rem', color: 'var(--accent-purple)', fontWeight: 700, marginBottom: '0.35rem', textTransform: 'uppercase'}}>Multi-Step Chain-of-Thought Reasoning</div>
+                              <div style={{fontSize: '0.72rem', color: 'var(--accent-purple)', fontWeight: 700, marginBottom: '0.35rem', textTransform: 'uppercase'}}>Diagnostic explanation</div>
                               <div style={{background: 'var(--ai-cot-bg)', border: '1px solid var(--ai-cot-border)', borderRadius: 'var(--radius-sm)', padding: '0.75rem', fontSize: '0.74rem', color: 'var(--ai-cot-text)', maxHeight: '150px', overflowY: 'auto'}}>
                                 {(aiAnalysis.explanation || '').split('; ').map((step, idx) => (
                                   <div key={idx} style={{marginBottom: '0.4rem', lineHeight: '1.5'}}>
@@ -744,6 +787,7 @@ export default function App() {
                               </div>
                             </div>
 
+                            <button className="btn btn-primary" onClick={handleProposePlan} disabled={!aiAnalysis.incidentId}>Propose remediation</button>
                             <div>
                               <div style={{fontSize: '0.72rem', color: '#a78bfa', fontWeight: 700, marginBottom: '0.35rem', textTransform: 'uppercase'}}>Mitigation Procedure</div>
                               {(aiAnalysis.mitigation_steps || []).map((step, idx) => (
@@ -787,7 +831,7 @@ export default function App() {
                     </div>
                   ) : (
                     remediationPlans.map(p => {
-                      const statusColor = p.state === 'VERIFIED_SUCCESSFUL' ? 'HEALTHY' : (p.state === 'REJECTED' || p.state === 'FAILED_ROLLBACK' ? 'CRITICAL' : 'DEGRADED');
+                      const statusColor = p.state === 'VERIFIED_SUCCESSFUL' ? 'HEALTHY' : (p.state === 'REJECTED' || ['FAILED_ROLLBACK', 'FAILED_VERIFICATION', 'EXECUTION_FAILED'].includes(p.state) ? 'CRITICAL' : 'DEGRADED');
                       return (
                         <div key={p.plan_id} style={{background: 'var(--bg-surface-elevated)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', padding: '1rem', marginBottom: '0.85rem'}}>
                           <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
@@ -838,25 +882,25 @@ export default function App() {
                     <div className="stat-label">Top-1 RCA Accuracy</div>
                     <div className="stat-val-row">
                       <span className="stat-val" style={{color: '#10b981'}}>
-                        {benchmarkData.metrics ? `${(benchmarkData.metrics.root_cause_top1_accuracy * 100).toFixed(1)}%` : '96.4%'}
+                        {benchmarkData.metrics?.root_cause_top1_accuracy != null ? `${(benchmarkData.metrics.root_cause_top1_accuracy * 100).toFixed(1)}%` : 'Not measured'}
                       </span>
                       <span className="stat-sub">Target &gt; 90%</span>
                     </div>
                   </div>
                   <div className="stat-card">
-                    <div className="stat-label">Tool Selection Accuracy</div>
+                    <div className="stat-label">Recommended Action Match</div>
                     <div className="stat-val-row">
                       <span className="stat-val" style={{color: '#10b981'}}>
-                        {benchmarkData.metrics ? `${(benchmarkData.metrics.tool_selection_accuracy * 100).toFixed(1)}%` : '98.1%'}
+                        {benchmarkData.metrics?.tool_selection_accuracy != null ? `${(benchmarkData.metrics.tool_selection_accuracy * 100).toFixed(1)}%` : 'Not measured'}
                       </span>
                       <span className="stat-sub">Allowlist Gated</span>
                     </div>
                   </div>
                   <div className="stat-card">
-                    <div className="stat-label">Mean Time to Diagnose</div>
+                    <div className="stat-label">Harness Diagnosis Time</div>
                     <div className="stat-val-row">
                       <span className="stat-val">
-                        {benchmarkData.metrics ? `${benchmarkData.metrics.mean_time_to_diagnose_sec}s` : '34.9s'}
+                        {benchmarkData.metrics?.mean_time_to_diagnose_sec != null ? `${benchmarkData.metrics.mean_time_to_diagnose_sec.toFixed(4)}s` : 'Not measured'}
                       </span>
                       <span className="stat-sub">Automated</span>
                     </div>
@@ -864,8 +908,8 @@ export default function App() {
                   <div className="stat-card">
                     <div className="stat-label">Unsafe Action Rate</div>
                     <div className="stat-val-row">
-                      <span className="stat-val" style={{color: '#10b981'}}>0.0%</span>
-                      <span className="stat-sub">Zero Escapes</span>
+                      <span className="stat-val" style={{color: '#10b981'}}>Not measured</span>
+                      <span className="stat-sub">Requires separate safety evaluation</span>
                     </div>
                   </div>
                 </div>
@@ -875,9 +919,9 @@ export default function App() {
                   <div className="card-header">
                     <div>
                       <div className="card-title-group">
-                        <h2>Agent Evaluation & Benchmark Scenarios (Section 14 & 20)</h2>
+                        <h2>Simulation Benchmark Scenarios</h2>
                       </div>
-                      <div className="card-subtitle">Deterministic incident test harness measuring multi-agent precision, safety, and latency</div>
+                      <div className="card-subtitle">Isolated synthetic cycles. Timings measure harness execution, not production MTTD or MTTR.</div>
                     </div>
                     <button className="btn btn-secondary" onClick={fetchBenchmarks} style={{fontSize: '0.75rem'}}>Refresh Suite</button>
                   </div>
@@ -902,8 +946,8 @@ export default function App() {
                             <td style={{padding: '0.75rem 0.6rem', color: 'var(--text-secondary)'}}>{s.injected_failure}</td>
                             <td style={{padding: '0.75rem 0.6rem'}}>{s.target_service}</td>
                             <td style={{padding: '0.75rem 0.6rem', color: 'var(--accent-purple)'}}>{s.expected_action}</td>
-                            <td style={{padding: '0.75rem 0.6rem'}}>{s.mttd_sec}s</td>
-                            <td style={{padding: '0.75rem 0.6rem', color: '#10b981', fontWeight: 700}}>{(s.accuracy_score * 100).toFixed(0)}%</td>
+                            <td style={{padding: '0.75rem 0.6rem'}}>{s.mttd_sec == null ? 'Not run' : `${s.mttd_sec.toFixed(4)}s`}</td>
+                            <td style={{padding: '0.75rem 0.6rem', color: '#10b981', fontWeight: 700}}>{s.accuracy_score == null ? 'Not run' : `${(s.accuracy_score * 100).toFixed(0)}%`}</td>
                             <td style={{padding: '0.75rem 0.6rem', textAlign: 'right'}}>
                               <button 
                                 className="btn btn-primary" 
@@ -928,23 +972,23 @@ export default function App() {
                       <div className="card-title-group">
                         <h2 style={{color: '#c4b5fd'}}>Live Benchmark Replay Result: {selectedScenarioReplay.scenario_name}</h2>
                       </div>
-                      <span className="badge badge-HEALTHY">VERIFIED REPLAY</span>
+                      <span className={`badge ${selectedScenarioReplay.status === "PASSED" ? "badge-HEALTHY" : "badge-CRITICAL"}`}>{selectedScenarioReplay.status}</span>
                     </div>
                     <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', fontSize: '0.8rem', padding: '0.5rem 0'}}>
                       <div style={{background: 'var(--bg-surface-elevated)', padding: '0.85rem', borderRadius: 'var(--radius-md)'}}>
                         <div style={{fontWeight: 700, color: '#a78bfa', marginBottom: '0.35rem'}}>Diagnosis Evaluation</div>
                         <div>Target Service: <strong>{selectedScenarioReplay.target_service}</strong></div>
-                        <div>Root Cause Match: <strong style={{color: '#10b981'}}>True (Top-1 Match)</strong></div>
-                        <div>Confidence Score: <strong>{(selectedScenarioReplay.diagnosis_result.confidence * 100).toFixed(1)}%</strong></div>
-                        <div>Evidence Items Collected: <strong>{selectedScenarioReplay.diagnosis_result.evidence_count} telemetry spans</strong></div>
-                        <div>MTTD: <strong>{selectedScenarioReplay.diagnosis_result.mttd_sec}s</strong></div>
+                        <div>Root Cause Match: <strong style={{color: '#10b981'}}>{selectedScenarioReplay.diagnosis_result.top1_match ? "Matched" : "Mismatch"}</strong></div>
+                        <div>Heuristic Score: <strong>{(selectedScenarioReplay.diagnosis_result.confidence * 100).toFixed(1)}%</strong></div>
+                        <div>Evidence Items Collected: <strong>{selectedScenarioReplay.diagnosis_result.evidence_count} anomaly signals</strong></div>
+                        <div>Harness diagnosis time: <strong>{selectedScenarioReplay.diagnosis_result.mttd_sec}s</strong></div>
                       </div>
                       <div style={{background: 'var(--bg-surface-elevated)', padding: '0.85rem', borderRadius: 'var(--radius-md)'}}>
                         <div style={{fontWeight: 700, color: '#a78bfa', marginBottom: '0.35rem'}}>Remediation & Safety Evaluation</div>
                         <div>Proposed Action: <code style={{color: 'var(--accent-primary)'}}>{selectedScenarioReplay.remediation_result.proposed_action}</code></div>
-                        <div>Blast Radius Validated: <strong style={{color: '#10b981'}}>True</strong></div>
-                        <div>Human Approval Gate: <strong style={{color: '#10b981'}}>Enforced</strong></div>
-                        <div>MTTR: <strong>{selectedScenarioReplay.remediation_result.mttr_sec}s</strong></div>
+                        <div>Recovery: <strong>{selectedScenarioReplay.remediation_result.recovered ? "Healthy after simulated recovery" : "Failed"}</strong></div>
+                        <div>Approval and safety workflow: <strong>Not measured by this harness</strong></div>
+                        <div>Harness recovery time: <strong>{selectedScenarioReplay.remediation_result.mttr_sec}s</strong></div>
                       </div>
                     </div>
                   </div>
@@ -994,9 +1038,9 @@ export default function App() {
                 <div className="card-header">
                   <div>
                     <div className="card-title-group">
-                      <h2>Multi-Agent SRE Hierarchy & Orchestration (Section 4)</h2>
+                      <h2>Sequential Investigation Workflow</h2>
                     </div>
-                    <div className="card-subtitle">Specialized autonomous workers with bounded tool permissions and state handoffs</div>
+                    <div className="card-subtitle">Four implemented stages with optional Ollama narration and a human approval checkpoint</div>
                   </div>
                   <button className="btn btn-secondary" onClick={fetchAgents} style={{fontSize: '0.75rem'}}>Refresh</button>
                 </div>
@@ -1032,7 +1076,7 @@ export default function App() {
             )}
 
             {/* ========================================================================= */}
-            {/* 7. KNOWLEDGE (RAG) */}
+            {/* 7. LOCAL RUNBOOKS */}
             {/* ========================================================================= */}
             {activeTab === 'knowledge' && (
               <div>
@@ -1041,9 +1085,9 @@ export default function App() {
                   <div className="card-header">
                     <div>
                       <div className="card-title-group">
-                        <h2>Runbooks & Vector Knowledge Base (pgvector / RAG)</h2>
+                        <h2>Local Operational Runbooks</h2>
                       </div>
-                      <div className="card-subtitle">Semantic search across operational runbooks, architecture specs, and postmortems</div>
+                      <div className="card-subtitle">Search saved runbook content by matching words; results quote the stored text.</div>
                     </div>
                   </div>
                   <form onSubmit={handleSearchRag} style={{display: 'flex', gap: '0.5rem', marginTop: '0.5rem'}}>
@@ -1055,20 +1099,20 @@ export default function App() {
                       onChange={e => setRagQuery(e.target.value)}
                     />
                     <button className="btn btn-primary" type="submit" style={{padding: '0.45rem 1rem'}}>
-                      Semantic Search
+                      Search Runbooks
                     </button>
                   </form>
 
                   {ragSearchResults && (
                     <div style={{marginTop: '1rem', background: 'rgba(59, 130, 246, 0.05)', border: '1px solid rgba(59, 130, 246, 0.2)', borderRadius: 'var(--radius-md)', padding: '0.85rem'}}>
                       <div style={{fontSize: '0.75rem', fontWeight: 700, color: '#93c5fd', marginBottom: '0.5rem'}}>
-                        Retrieved {ragSearchResults.citations.length} Semantic Vector Matches:
+                        Retrieved {ragSearchResults.citations.length} Runbook Matches:
                       </div>
                       {ragSearchResults.citations.map((c, idx) => (
                         <div key={idx} style={{marginBottom: '0.5rem', fontSize: '0.75rem', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '0.4rem'}}>
                           <div style={{display: 'flex', justifyContent: 'space-between'}}>
                             <span style={{fontWeight: 600, color: '#f8fafc'}}>{c.doc_title}</span>
-                            <span style={{color: '#10b981'}}>{(c.similarity_score * 100).toFixed(0)}% Similarity</span>
+                            <span style={{color: '#10b981'}}>{(c.similarity_score * 100).toFixed(0)}% Query Term Match</span>
                           </div>
                           <div style={{color: 'var(--text-muted)', fontSize: '0.72rem', marginTop: '0.15rem'}}>{c.excerpt}</div>
                         </div>
@@ -1132,9 +1176,9 @@ export default function App() {
                     <div className="form-group">
                       <label className="form-label">Failure Mode</label>
                       <select className="form-select" value={chaosType} onChange={e => setChaosType(e.target.value)}>
-                        <option value="LATENCY_SPIKE">LATENCY_SPIKE (Simulate slow downstream API)</option>
+                        <option value="LATENCY">LATENCY (Simulate slow downstream API)</option>
                         <option value="ERROR_STORM">ERROR_STORM (Simulate 500 error cascade)</option>
-                        <option value="CPU_SATURATION">CPU_SATURATION (Simulate heavy thread load)</option>
+                        <option value="RESOURCE_SATURATION">RESOURCE_SATURATION (Simulate heavy thread load)</option>
                         <option value="CASCADING_FAILURE">CASCADING_FAILURE (Total downstream outage)</option>
                       </select>
                     </div>
@@ -1192,12 +1236,12 @@ export default function App() {
                     <div className="card-title-group">
                       <h2>Cryptographic SHA-256 Audit Ledger</h2>
                     </div>
-                    <div className="card-subtitle">Immutable backward-chained log entries with tamper verification</div>
+                    <div className="card-subtitle">Persisted hash-chained log entries with tamper verification</div>
                   </div>
                   <div style={{display: 'flex', gap: '0.5rem'}}>
                     <button className="btn btn-secondary" onClick={fetchAuditLogs} style={{fontSize: '0.75rem'}}>Refresh</button>
                     <button className="btn btn-primary" onClick={async () => {
-                      const res = await fetch(`${API_BASE}/api/v1/audit/verify`);
+                      const res = await apiFetch(`/api/v1/audit/verify`);
                       if (res.ok) {
                         const rep = await res.json();
                         setAuditVerification(rep);
@@ -1211,10 +1255,27 @@ export default function App() {
                 {auditVerification && (
                   <div style={{margin: '0.5rem 0 1rem 0', padding: '0.75rem 1rem', borderRadius: 'var(--radius-md)', background: auditVerification.is_valid ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(16, 185, 129, 0.3)', display: 'flex', justifyContent: 'space-between'}}>
                     <span style={{fontWeight: 700, color: auditVerification.is_valid ? '#10b981' : '#ef4444', fontSize: '0.82rem'}}>
-                      {auditVerification.is_valid ? `✔ LEDGER VERIFIED IMMUTABLE (${auditVerification.total_entries} blocks intact)` : '⚠ TAMPER DETECTED'}
+                      {auditVerification.is_valid ? `✔ AUDIT CHAIN VERIFIED (${auditVerification.total_entries} entries intact)` : '⚠ AUDIT CHAIN VERIFICATION FAILED'}
                     </span>
                     <button className="btn btn-secondary" style={{padding: '0.1rem 0.4rem', fontSize: '0.68rem'}} onClick={() => setAuditVerification(null)}>Dismiss</button>
                   </div>
+                )}
+
+                {legacyAudit?.summary && (
+                  <details style={{margin: '0.5rem 0 1rem', padding: '0.75rem 1rem', borderRadius: 'var(--radius-md)', background: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.3)'}}>
+                    <summary style={{cursor: 'pointer', color: '#fbbf24', fontWeight: 600}}>
+                      {legacyAudit.summary.archived_records} legacy audit records preserved as unverified history
+                    </summary>
+                    <p style={{fontSize: '0.8rem', color: 'var(--text-muted)'}}>The earlier audit chain failed verification. Its original records are archived separately and are excluded from the active chain verification above. Showing up to 50 archived records.</p>
+                    <div style={{maxHeight: '260px', overflowY: 'auto'}}>
+                      {legacyAudit.records.map(({record}) => (
+                        <div key={record.log_id} style={{padding: '0.5rem 0', borderBottom: '1px solid var(--border-subtle)', fontSize: '0.75rem'}}>
+                          <strong>{record.actor}</strong> · {record.action_summary}
+                          <div style={{color: 'var(--text-dim)'}}>{record.timestamp} · {record.target_resource} · Unverified</div>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
                 )}
 
                 <div style={{maxHeight: '520px', overflowY: 'auto'}}>
@@ -1271,8 +1332,8 @@ export default function App() {
                       <div style={{fontWeight: 700, fontSize: '0.85rem', marginBottom: '0.5rem', color: '#93c5fd'}}>Safety Policy Risk Matrix (Section 13.1)</div>
                       <div style={{fontSize: '0.78rem', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: '0.35rem'}}>
                         <div>🟢 <strong>Low Risk</strong>: Synthetic GET probes & diagnostics execute autonomously.</div>
-                        <div>🟡 <strong>Medium Risk</strong>: Single-pod restarts & bounded scaling require Human SRE approval.</div>
-                        <div>🔴 <strong>High Risk</strong>: Rollbacks & config mutations gated by Lead SRE authorization.</div>
+                        <div>🟡 <strong>Medium Risk</strong>: Simulated recovery actions require a lead or administrator approval.</div>
+                        <div>🔴 <strong>High Risk</strong>: Threshold updates require an administrator; live cluster actions are unavailable.</div>
                         <div>⛔ <strong>Prohibited</strong>: Arbitrary shells & namespace deletion completely disabled from model.</div>
                       </div>
                     </div>
@@ -1284,44 +1345,27 @@ export default function App() {
         )}
       </main>
 
-      {/* Switch Identity / Login Modal */}
       {showLoginModal && (
         <div className="modal-backdrop open">
-          <div className="modal-dialog" style={{maxWidth: '480px'}}>
-            <h3 style={{fontWeight: 700, fontSize: '1.05rem', marginBottom: '0.25rem'}}>Switch User Identity & Role</h3>
-            <p style={{fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1rem'}}>
-              Select an enterprise SRE profile to test RBAC authorization enforcement:
-            </p>
-            <div style={{display: 'flex', flexDirection: 'column', gap: '0.5rem'}}>
-              {Object.keys(userCredentials).map(k => {
-                const u = userCredentials[k];
-                return (
-                  <div 
-                    key={k} 
-                    onClick={() => { setRole(u.role); setShowLoginModal(false); }}
-                    style={{
-                      background: role === u.role ? 'rgba(59, 130, 246, 0.15)' : 'var(--bg-surface-elevated)',
-                      border: role === u.role ? '1px solid var(--border-focus)' : '1px solid var(--border-subtle)',
-                      borderRadius: 'var(--radius-md)',
-                      padding: '0.75rem',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center'
-                    }}
-                  >
-                    <div>
-                      <div style={{fontWeight: 700, fontSize: '0.85rem', color: '#f8fafc'}}>{u.label} (<code>{u.role}</code>)</div>
-                      <div style={{fontSize: '0.72rem', color: 'var(--text-muted)'}}>{u.perm}</div>
-                    </div>
-                    {role === u.role && <span style={{color: '#10b981', fontWeight: 700}}>Active</span>}
-                  </div>
-                );
-              })}
-            </div>
-            <div style={{display: 'flex', justifyContent: 'flex-end', marginTop: '1rem'}}>
-              <button className="btn btn-secondary" onClick={() => setShowLoginModal(false)}>Close</button>
-            </div>
+          <div className="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="login-title" style={{maxWidth: '480px'}}>
+            <h3 id="login-title">Sign in to Agentic SRE</h3>
+            <p>Your account determines your permissions.</p>
+            <form onSubmit={handleLogin}>
+              <div className="form-group">
+                <label htmlFor="login-name" className="form-label">Username</label>
+                <input id="login-name" className="form-control" autoComplete="username" value={loginName} onChange={event => setLoginName(event.target.value)} required />
+              </div>
+              <div className="form-group">
+                <label htmlFor="login-password" className="form-label">Password</label>
+                <input id="login-password" className="form-control" type="password" autoComplete="current-password" value={loginPassword} onChange={event => setLoginPassword(event.target.value)} required />
+              </div>
+              {loginError && <p role="alert" style={{color: '#ef4444'}}>{loginError}</p>}
+              <div style={{display: 'flex', gap: '0.5rem', marginTop: '1rem'}}>
+                <button className="btn btn-primary" type="submit" disabled={loginBusy}>{loginBusy ? 'Signing in...' : 'Sign in'}</button>
+                {token && <button className="btn btn-secondary" type="button" onClick={() => setShowLoginModal(false)}>Cancel</button>}
+                {token && <button className="btn btn-secondary" type="button" onClick={clearSession}>Sign out</button>}
+              </div>
+            </form>
           </div>
         </div>
       )}
@@ -1334,15 +1378,15 @@ export default function App() {
               Welcome to Agentic SRE Sentinel Platform
             </h3>
             <p style={{fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.85rem'}}>
-              This enterprise console implements the complete 12-page specification outlined in the Sentinel Blueprint:
+              This console demonstrates incident workflows using synthetic services. It does not execute actions on a Kubernetes cluster:
             </p>
             <div style={{fontSize: '0.78rem', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: '0.4rem'}}>
               <div>🔹 <strong>Overview</strong>: Real-time SVG dependency topology and golden signals telemetry.</div>
-              <div>🔹 <strong>Incidents</strong>: Incident lifecycle with Root Cause Analysis (RCA) and LangGraph AI reasoning.</div>
+              <div>🔹 <strong>Incidents</strong>: Incident lifecycle with Root Cause Analysis (RCA) and deterministic diagnosis.</div>
               <div>🔹 <strong>Approvals</strong>: Human-in-the-loop safety barrier for rollback and restart operations.</div>
-              <div>🔹 <strong>Evaluations</strong>: Benchmark replay suite measuring MTTD, MTTR, and RCA accuracy.</div>
+              <div>🔹 <strong>Evaluations</strong>: Isolated benchmarks with measured harness timings and root cause matches.</div>
               <div>🔹 <strong>Services & Agents</strong>: Microservice catalog and multi-agent hierarchy.</div>
-              <div>🔹 <strong>Knowledge & Audit</strong>: Semantic RAG runbooks and cryptographic SHA-256 ledger.</div>
+              <div>🔹 <strong>Knowledge & Audit</strong>: Saved local runbooks and cryptographic SHA-256 ledger.</div>
             </div>
             <div style={{display: 'flex', justifyContent: 'flex-end', marginTop: '1.25rem'}}>
               <button className="btn btn-primary" onClick={() => setShowTourModal(false)}>Explore Platform</button>

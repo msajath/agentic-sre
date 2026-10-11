@@ -1,25 +1,13 @@
-"""
-Incident Lifecycle Management and State Machine Engine.
-Enforces auditable state transitions, SLA tracking, and forensic timelines.
-"""
-
+"""Transactional incident lifecycle and deduplicated detection."""
 from datetime import datetime, timezone
 import json
 import threading
-from typing import Dict, List, Optional
-
+from typing import List, Optional
 from src.database import IncidentModel, SessionLocal
 from src.models.audit import AuditEventType
-from src.models.incident import (
-    IncidentRecord,
-    IncidentSeverity,
-    IncidentState,
-    IncidentTimelineEvent,
-)
+from src.models.incident import IncidentRecord, IncidentSeverity, IncidentState, IncidentTimelineEvent
 from src.services.audit_service import audit_service
 
-
-# State Machine Transition Rules
 VALID_TRANSITIONS = {
     IncidentState.DETECTED: {IncidentState.ACKNOWLEDGED, IncidentState.INVESTIGATING, IncidentState.CLOSED},
     IncidentState.ACKNOWLEDGED: {IncidentState.INVESTIGATING, IncidentState.CLOSED},
@@ -27,249 +15,113 @@ VALID_TRANSITIONS = {
     IncidentState.PENDING_APPROVAL: {IncidentState.REMEDIATING, IncidentState.INVESTIGATING, IncidentState.CLOSED},
     IncidentState.REMEDIATING: {IncidentState.RESOLVED, IncidentState.INVESTIGATING},
     IncidentState.RESOLVED: {IncidentState.CLOSED, IncidentState.INVESTIGATING},
-    IncidentState.CLOSED: {IncidentState.INVESTIGATING},  # Can reopen if symptoms recur
+    IncidentState.CLOSED: {IncidentState.INVESTIGATING},
 }
-
 
 class IncidentService:
     def __init__(self):
-        self._lock = threading.Lock()
-        self._incidents: Dict[str, IncidentRecord] = {}
-        self._load_from_db()
+        self._lock = threading.RLock()
 
-    def _load_from_db(self):
-        """Hydrates active incidents from persistent SQLite database."""
-        with SessionLocal() as session:
-            try:
-                for row in session.query(IncidentModel).all():
-                    timeline_events = [IncidentTimelineEvent(**e) for e in json.loads(row.timeline)]
-                    created_at = row.created_at.replace(tzinfo=timezone.utc) if row.created_at and row.created_at.tzinfo is None else row.created_at
-                    updated_at = row.updated_at.replace(tzinfo=timezone.utc) if row.updated_at and row.updated_at.tzinfo is None else row.updated_at
-                    resolved_at = row.resolved_at.replace(tzinfo=timezone.utc) if row.resolved_at and row.resolved_at.tzinfo is None else row.resolved_at
-                    self._incidents[row.incident_id] = IncidentRecord(
-                        incident_id=row.incident_id,
-                        title=row.title,
-                        description=row.description,
-                        state=IncidentState(row.state),
-                        severity=IncidentSeverity(row.severity),
-                        root_cause_service=row.root_cause_service,
-                        affected_services=json.loads(row.affected_services),
-                        timeline=timeline_events,
-                        created_at=created_at,
-                        updated_at=updated_at,
-                        resolved_at=resolved_at,
-                    )
-            except Exception as e:
-                print(f"[Incident DB Hydration Warning] {e}")
+    def initialize(self):
+        self.list_incidents()  # Validate persisted records; errors stop startup.
 
-    def _save_incident_to_db(self, incident: IncidentRecord):
-        """Upserts an incident record into SQLite."""
-        with SessionLocal() as session:
-            try:
-                row = session.query(IncidentModel).filter_by(incident_id=incident.incident_id).first()
-                timeline_json = json.dumps([e.model_dump(mode="json") for e in incident.timeline])
-                affected_json = json.dumps(incident.affected_services)
-                
-                if not row:
-                    row = IncidentModel(
-                        incident_id=incident.incident_id,
-                        title=incident.title,
-                        description=incident.description,
-                        state=incident.state.value,
-                        severity=incident.severity.value,
-                        root_cause_service=incident.root_cause_service,
-                        affected_services=affected_json,
-                        timeline=timeline_json,
-                        created_at=incident.created_at,
-                        updated_at=incident.updated_at,
-                        resolved_at=incident.resolved_at,
-                    )
-                    session.add(row)
-                else:
-                    row.state = incident.state.value
-                    row.timeline = timeline_json
-                    row.updated_at = incident.updated_at
-                    row.resolved_at = incident.resolved_at
-                session.commit()
-            except Exception as e:
-                print(f"[Incident DB Save Warning] {e}")
+    @staticmethod
+    def _from_row(row):
+        data = {key: getattr(row, key) for key in (
+            "incident_id", "title", "description", "state", "severity", "root_cause_service",
+            "created_at", "updated_at", "resolved_at")}
+        for key in ("created_at", "updated_at", "resolved_at"):
+            if data[key] and data[key].tzinfo is None:
+                data[key] = data[key].replace(tzinfo=timezone.utc)
+        data["affected_services"] = json.loads(row.affected_services)
+        data["timeline"] = json.loads(row.timeline)
+        return IncidentRecord(**data)
 
-    def create_incident(
-        self,
-        title: str,
-        description: str,
-        severity: IncidentSeverity = IncidentSeverity.MEDIUM,
-        root_cause_service: Optional[str] = None,
-        affected_services: Optional[List[str]] = None,
-        actor: str = "system",
-        actor_role: str = "SYSTEM",
-    ) -> IncidentRecord:
-        """Instantiates a new incident and records initial audit timeline."""
-        with self._lock:
-            incident = IncidentRecord(
-                title=title,
-                description=description,
-                severity=severity,
-                root_cause_service=root_cause_service,
-                affected_services=affected_services or [],
-                state=IncidentState.DETECTED,
-            )
+    @staticmethod
+    def _save(session, incident):
+        row = session.get(IncidentModel, incident.incident_id) or IncidentModel(incident_id=incident.incident_id)
+        for key in ("title", "description", "root_cause_service", "created_at", "updated_at", "resolved_at"):
+            setattr(row, key, getattr(incident, key))
+        row.state, row.severity = incident.state.value, incident.severity.value
+        row.affected_services = json.dumps(incident.affected_services)
+        row.timeline = json.dumps([event.model_dump(mode="json") for event in incident.timeline])
+        session.add(row)
+        session.flush()
 
-            # Record initial timeline event
-            incident.timeline.append(
-                IncidentTimelineEvent(
-                    actor=actor,
-                    action="Incident Created",
-                    to_state=IncidentState.DETECTED,
-                    note=description,
-                )
-            )
-
-            self._incidents[incident.incident_id] = incident
-            self._save_incident_to_db(incident)
-
-        # Record cryptographically chained audit log
-        audit_service.record_event(
-            event_type=AuditEventType.INCIDENT_CREATE,
-            actor=actor,
-            actor_role=actor_role,
-            target_resource=incident.incident_id,
-            action_summary=f"Incident created: {incident.title}",
-            details={
-                "severity": incident.severity.value,
-                "root_cause": root_cause_service,
-                "affected_services": affected_services,
-            },
-        )
-
+    def create_incident(self, title: str, description: str, severity: IncidentSeverity = IncidentSeverity.MEDIUM,
+                        root_cause_service: Optional[str] = None, affected_services: Optional[List[str]] = None,
+                        actor: str = "system", actor_role: str = "SYSTEM") -> IncidentRecord:
+        incident = IncidentRecord(title=title, description=description, severity=severity,
+                                  root_cause_service=root_cause_service, affected_services=affected_services or [])
+        incident.timeline.append(IncidentTimelineEvent(actor=actor, action="Incident Created",
+                                                      to_state=IncidentState.DETECTED, note=description))
+        with self._lock, SessionLocal.begin() as session:
+            self._save(session, incident)
+            audit_service.record_event(AuditEventType.INCIDENT_CREATE, actor, actor_role, incident.incident_id,
+                                       f"Incident created: {title}", {"severity": incident.severity.value,
+                                       "root_cause": root_cause_service, "affected_services": incident.affected_services}, session)
         return incident
 
-    def transition_state(
-        self,
-        incident_id: str,
-        target_state: IncidentState,
-        reason: str,
-        actor: str,
-        actor_role: str,
-    ) -> IncidentRecord:
-        """
-        Transitions an incident to a new state following state-machine rules.
-        """
+    def capture_detection(self, candidate: IncidentRecord) -> IncidentRecord:
+        """Keep one active persisted incident per root service and affected service set."""
         with self._lock:
-            incident = self._incidents.get(incident_id)
-            if not incident:
+            for incident in self.list_incidents():
+                if (incident.state not in {IncidentState.RESOLVED, IncidentState.CLOSED}
+                    and incident.root_cause_service == candidate.root_cause_service
+                    and set(incident.affected_services) == set(candidate.affected_services)):
+                    return incident
+            return self.create_incident(candidate.title, candidate.description, candidate.severity,
+                                        candidate.root_cause_service, candidate.affected_services)
+
+    def transition_state(self, incident_id: str, target_state: IncidentState, reason: str, actor: str, actor_role: str):
+        target_state = IncidentState(target_state)
+        with self._lock, SessionLocal.begin() as session:
+            row = session.get(IncidentModel, incident_id)
+            if not row:
                 raise KeyError(f"Incident with ID '{incident_id}' does not exist.")
-
-            current_state = incident.state
-            allowed_next = VALID_TRANSITIONS.get(current_state, set())
-
-            if target_state not in allowed_next:
-                raise ValueError(
-                    f"Illegal lifecycle transition from '{current_state.value}' to '{target_state.value}'. "
-                    f"Allowed transitions: {[s.value for s in allowed_next]}"
-                )
-
-            now = datetime.now(timezone.utc)
+            incident = self._from_row(row)
+            previous = incident.state
+            if target_state not in VALID_TRANSITIONS[previous]:
+                raise ValueError(f"Illegal lifecycle transition from '{previous.value}' to '{target_state.value}'.")
             incident.state = target_state
-            incident.updated_at = now
-
-            if target_state == IncidentState.RESOLVED:
-                incident.resolved_at = now
-
-            # Append to internal timeline
-            incident.timeline.append(
-                IncidentTimelineEvent(
-                    actor=actor,
-                    action=f"Transitioned state from {current_state.value} to {target_state.value}",
-                    from_state=current_state,
-                    to_state=target_state,
-                    note=reason,
-                )
-            )
-            self._save_incident_to_db(incident)
-
-        # Audit log the state transition
-        audit_service.record_event(
-            event_type=AuditEventType.INCIDENT_TRANSITION,
-            actor=actor,
-            actor_role=actor_role,
-            target_resource=incident_id,
-            action_summary=f"Incident {incident_id} state changed: {current_state.value} -> {target_state.value}",
-            details={"from_state": current_state.value, "to_state": target_state.value, "reason": reason},
-        )
-
+            incident.updated_at = datetime.now(timezone.utc)
+            incident.resolved_at = incident.updated_at if target_state == IncidentState.RESOLVED else None
+            incident.timeline.append(IncidentTimelineEvent(actor=actor, action=f"Transitioned state from {previous.value} to {target_state.value}",
+                                                          from_state=previous, to_state=target_state, note=reason))
+            self._save(session, incident)
+            audit_service.record_event(AuditEventType.INCIDENT_TRANSITION, actor, actor_role, incident_id,
+                                       f"Incident {incident_id} state changed: {previous.value} -> {target_state.value}",
+                                       {"reason": reason}, session)
         return incident
 
-    def add_note(
-        self,
-        incident_id: str,
-        note: str,
-        actor: str,
-        actor_role: str,
-    ) -> IncidentRecord:
-        """Adds a collaborative triage note to the incident timeline."""
-        with self._lock:
-            incident = self._incidents.get(incident_id)
-            if not incident:
+    def add_note(self, incident_id: str, note: str, actor: str, actor_role: str):
+        with self._lock, SessionLocal.begin() as session:
+            row = session.get(IncidentModel, incident_id)
+            if not row:
                 raise KeyError(f"Incident with ID '{incident_id}' does not exist.")
-
-            now = datetime.now(timezone.utc)
-            incident.updated_at = now
-            incident.timeline.append(
-                IncidentTimelineEvent(
-                    actor=actor,
-                    action="Triage Note Added",
-                    from_state=incident.state,
-                    to_state=incident.state,
-                    note=note,
-                )
-            )
-            self._save_incident_to_db(incident)
-
-        audit_service.record_event(
-            event_type=AuditEventType.INCIDENT_NOTE,
-            actor=actor,
-            actor_role=actor_role,
-            target_resource=incident_id,
-            action_summary=f"Triage note added by {actor}",
-            details={"note_snippet": note[:100]},
-        )
-
+            incident = self._from_row(row)
+            incident.timeline.append(IncidentTimelineEvent(actor=actor, action="Triage Note Added", note=note))
+            incident.updated_at = datetime.now(timezone.utc)
+            self._save(session, incident)
+            audit_service.record_event(AuditEventType.INCIDENT_NOTE, actor, actor_role, incident_id,
+                                       f"Triage note added by {actor}", {"note": note}, session)
         return incident
 
-    def get_incident(self, incident_id: str) -> Optional[IncidentRecord]:
-        with self._lock:
-            return self._incidents.get(incident_id)
+    def get_incident(self, incident_id):
+        with SessionLocal() as session:
+            row = session.get(IncidentModel, incident_id)
+            return self._from_row(row) if row else None
 
-    def list_incidents(
-        self,
-        state: Optional[IncidentState] = None,
-        severity: Optional[IncidentSeverity] = None,
-        service: Optional[str] = None,
-    ) -> List[IncidentRecord]:
-        """Lists incidents filtered by state, severity, or affected service."""
-        with self._lock:
-            incidents = list(self._incidents.values())
-
+    def list_incidents(self, state=None, severity=None, service=None):
+        with SessionLocal() as session:
+            incidents = [self._from_row(row) for row in session.query(IncidentModel).all()]
         if state:
-            incidents = [inc for inc in incidents if inc.state == state]
+            incidents = [incident for incident in incidents if incident.state == state]
         if severity:
-            incidents = [inc for inc in incidents if inc.severity == severity]
+            incidents = [incident for incident in incidents if incident.severity == severity]
         if service:
-            incidents = [
-                inc for inc in incidents
-                if service.lower() in [s.lower() for s in inc.affected_services]
-                or (inc.root_cause_service and inc.root_cause_service.lower() == service.lower())
-            ]
-
-        # Return sorted by updated_at desc
-        def get_sort_key(inc):
-            dt = inc.updated_at
-            if dt and dt.tzinfo is None:
-                return dt.replace(tzinfo=timezone.utc)
-            return dt or datetime.min.replace(tzinfo=timezone.utc)
-
-        return sorted(incidents, key=get_sort_key, reverse=True)
-
+            incidents = [incident for incident in incidents if service.lower() in incident.affected_services
+                         or incident.root_cause_service == service.lower()]
+        return sorted(incidents, key=lambda incident: incident.updated_at, reverse=True)
 
 incident_service = IncidentService()
