@@ -411,19 +411,6 @@ export default function App() {
               Emergency Reset
             </button>
 
-            <div className="theme-switcher-wrapper">
-              {[
-                { id: 'humanized', label: 'Humanized' }
-              ].map(t => (
-                <button 
-                  key={t.id}
-                  className={`theme-btn ${theme === t.id ? 'active' : ''}`}
-                  onClick={() => setTheme(t.id)}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
 
             <div className={`pill-badge ${wsStatus === 'STREAM LIVE' ? 'pill-healthy' : 'pill-critical'}`}>
               <span className="pill-dot"></span>
