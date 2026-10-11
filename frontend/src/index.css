@@ -77,8 +77,8 @@
   padding: 0;
 }
 
-html, body, button, input, select, textarea, optgroup {
-  font-family: var(--font-sans);
+html, body, button, input, select, textarea, optgroup, code, pre, table, th, td, div, span, p, h1, h2, h3, h4, h5, h6, label, a {
+  font-family: var(--font-sans) !important;
 }
 
 body {
@@ -687,7 +687,7 @@ body {
 
 .cot-step-badge {
   font-size: 0.7rem;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-weight: 700;
   color: #7c3aed;
   background: rgba(124, 58, 237, 0.1);

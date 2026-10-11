@@ -596,7 +596,7 @@ export default function App() {
                         <div className="metric-bar-group">
                           <div className="metric-bar-header">
                             <span>p95 Latency</span>
-                            <span style={{fontFamily: 'var(--font-mono)'}}>{Math.round(svc.p95_latency_ms)} ms</span>
+                            <span>{Math.round(svc.p95_latency_ms)} ms</span>
                           </div>
                           <div className="metric-bar-track">
                             <div className="metric-bar-fill" style={{ width: `${Math.min(100, (svc.p95_latency_ms / 600) * 100)}%`, background: svc.p95_latency_ms > 400 ? 'var(--status-critical)' : 'var(--status-healthy)' }} />
@@ -605,7 +605,7 @@ export default function App() {
                         <div className="metric-bar-group">
                           <div className="metric-bar-header">
                             <span>Error Rate</span>
-                            <span style={{fontFamily: 'var(--font-mono)'}}>{(svc.error_rate * 100).toFixed(1)}%</span>
+                            <span>{(svc.error_rate * 100).toFixed(1)}%</span>
                           </div>
                           <div className="metric-bar-track">
                             <div className="metric-bar-fill" style={{ width: `${Math.min(100, svc.error_rate * 500)}%`, background: svc.error_rate > 0.05 ? 'var(--status-critical)' : 'var(--status-healthy)' }} />
@@ -649,7 +649,7 @@ export default function App() {
                             >
                               <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
                                 <div>
-                                  <span style={{fontFamily: 'var(--font-mono)', fontWeight: 700, color: '#93c5fd', fontSize: '0.8rem'}}>{inc.incident_id}</span>
+                                  <span style={{fontWeight: 700, color: 'var(--accent-primary)', fontSize: '0.8rem'}}>{inc.incident_id}</span>
                                   <span style={{fontWeight: 600, fontSize: '0.82rem', marginLeft: '0.4rem'}}>{inc.title}</span>
                                 </div>
                                 <span className={`badge badge-${inc.state === 'RESOLVED' ? 'HEALTHY' : 'CRITICAL'}`}>{inc.state}</span>
@@ -673,7 +673,7 @@ export default function App() {
                       </div>
                       {diagnosis ? (
                         <div style={{background: 'rgba(239, 68, 68, 0.05)', border: '1px solid rgba(239, 68, 68, 0.2)', padding: '0.85rem', borderRadius: 'var(--radius-md)'}}>
-                          <div style={{fontSize: '0.9rem', fontWeight: 700, color: '#fca5a5', fontFamily: 'var(--font-mono)'}}>
+                          <div style={{fontSize: '0.9rem', fontWeight: 700, color: 'var(--status-critical)'}}>
                             Target: {diagnosis.root_cause_service}
                           </div>
                           <div style={{marginTop: '0.3rem', fontSize: '0.78rem', color: 'var(--text-secondary)'}}>
@@ -724,7 +724,7 @@ export default function App() {
                             <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '0.75rem'}}>
                               <div>
                                 <div style={{fontSize: '0.7rem', color: 'var(--accent-purple)', textTransform: 'uppercase', fontWeight: 700}}>Root Cause Hypothesis</div>
-                                <div style={{fontSize: '1.15rem', fontWeight: 800, color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', marginTop: '0.15rem'}}>
+                                <div style={{fontSize: '1.15rem', fontWeight: 800, color: 'var(--text-primary)', marginTop: '0.15rem'}}>
                                   {aiAnalysis.root_cause_service}
                                 </div>
                               </div>
@@ -735,7 +735,7 @@ export default function App() {
 
                             <div style={{marginBottom: '0.85rem'}}>
                               <div style={{fontSize: '0.72rem', color: 'var(--accent-purple)', fontWeight: 700, marginBottom: '0.35rem', textTransform: 'uppercase'}}>Multi-Step Chain-of-Thought Reasoning</div>
-                              <div style={{background: 'var(--ai-cot-bg)', border: '1px solid var(--ai-cot-border)', borderRadius: 'var(--radius-sm)', padding: '0.75rem', fontFamily: 'var(--font-mono)', fontSize: '0.74rem', color: 'var(--ai-cot-text)', maxHeight: '150px', overflowY: 'auto'}}>
+                              <div style={{background: 'var(--ai-cot-bg)', border: '1px solid var(--ai-cot-border)', borderRadius: 'var(--radius-sm)', padding: '0.75rem', fontSize: '0.74rem', color: 'var(--ai-cot-text)', maxHeight: '150px', overflowY: 'auto'}}>
                                 {(aiAnalysis.explanation || '').split('; ').map((step, idx) => (
                                   <div key={idx} style={{marginBottom: '0.4rem', lineHeight: '1.5'}}>
                                     <span style={{color: 'var(--accent-purple)', fontWeight: 700}}>{step.includes(']') ? step.split(']')[0].replace('[', '') : `Step ${idx+1}`}</span>: {step.includes(']') ? step.split(']')[1] : step}
@@ -792,7 +792,7 @@ export default function App() {
                         <div key={p.plan_id} style={{background: 'var(--bg-surface-elevated)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', padding: '1rem', marginBottom: '0.85rem'}}>
                           <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
                             <div>
-                              <span style={{fontFamily: 'var(--font-mono)', fontWeight: 700, color: '#93c5fd', fontSize: '0.82rem'}}>{p.plan_id}</span>
+                              <span style={{fontWeight: 700, color: 'var(--accent-primary)', fontSize: '0.82rem'}}>{p.plan_id}</span>
                               <span style={{fontWeight: 700, fontSize: '0.88rem', marginLeft: '0.5rem'}}>{p.action_type}</span>
                               <span style={{color: 'var(--text-muted)', fontSize: '0.8rem', marginLeft: '0.4rem'}}>on <strong>{p.target_service}</strong></span>
                             </div>
@@ -900,8 +900,8 @@ export default function App() {
                           <tr key={s.id} style={{borderBottom: '1px solid var(--border-subtle)'}}>
                             <td style={{padding: '0.75rem 0.6rem', fontWeight: 600, color: '#93c5fd'}}>{s.scenario_name}</td>
                             <td style={{padding: '0.75rem 0.6rem', color: 'var(--text-secondary)'}}>{s.injected_failure}</td>
-                            <td style={{padding: '0.75rem 0.6rem', fontFamily: 'var(--font-mono)'}}>{s.target_service}</td>
-                            <td style={{padding: '0.75rem 0.6rem', fontFamily: 'var(--font-mono)', color: '#a78bfa'}}>{s.expected_action}</td>
+                            <td style={{padding: '0.75rem 0.6rem'}}>{s.target_service}</td>
+                            <td style={{padding: '0.75rem 0.6rem', color: 'var(--accent-purple)'}}>{s.expected_action}</td>
                             <td style={{padding: '0.75rem 0.6rem'}}>{s.mttd_sec}s</td>
                             <td style={{padding: '0.75rem 0.6rem', color: '#10b981', fontWeight: 700}}>{(s.accuracy_score * 100).toFixed(0)}%</td>
                             <td style={{padding: '0.75rem 0.6rem', textAlign: 'right'}}>
@@ -941,7 +941,7 @@ export default function App() {
                       </div>
                       <div style={{background: 'var(--bg-surface-elevated)', padding: '0.85rem', borderRadius: 'var(--radius-md)'}}>
                         <div style={{fontWeight: 700, color: '#a78bfa', marginBottom: '0.35rem'}}>Remediation & Safety Evaluation</div>
-                        <div>Proposed Action: <code style={{fontFamily: 'var(--font-mono)', color: '#93c5fd'}}>{selectedScenarioReplay.remediation_result.proposed_action}</code></div>
+                        <div>Proposed Action: <code style={{color: 'var(--accent-primary)'}}>{selectedScenarioReplay.remediation_result.proposed_action}</code></div>
                         <div>Blast Radius Validated: <strong style={{color: '#10b981'}}>True</strong></div>
                         <div>Human Approval Gate: <strong style={{color: '#10b981'}}>Enforced</strong></div>
                         <div>MTTR: <strong>{selectedScenarioReplay.remediation_result.mttr_sec}s</strong></div>
@@ -1088,7 +1088,7 @@ export default function App() {
                       <div key={doc.id} style={{background: 'var(--bg-surface-elevated)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', padding: '0.85rem'}}>
                         <div style={{display: 'flex', justifyContent: 'space-between'}}>
                           <div>
-                            <span style={{fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: '#93c5fd'}}>{doc.id}</span>
+                            <span style={{fontSize: '0.75rem', color: 'var(--accent-primary)', fontWeight: 600}}>{doc.id}</span>
                             <span style={{fontWeight: 700, fontSize: '0.85rem', marginLeft: '0.4rem'}}>{doc.title}</span>
                           </div>
                           <span className="badge badge-HEALTHY">{doc.category}</span>
@@ -1167,7 +1167,7 @@ export default function App() {
                     activeFaults.map((f, idx) => (
                       <div key={idx} style={{background: 'rgba(239, 68, 68, 0.05)', border: '1px solid rgba(239, 68, 68, 0.25)', borderRadius: 'var(--radius-md)', padding: '0.75rem', marginBottom: '0.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
                         <div>
-                          <div style={{fontFamily: 'var(--font-mono)', fontSize: '0.82rem', fontWeight: 700, color: '#fca5a5'}}>
+                          <div style={{fontSize: '0.82rem', fontWeight: 700, color: 'var(--status-critical)'}}>
                             {f.service_name} ➔ {f.fault_type}
                           </div>
                           <div style={{fontSize: '0.7rem', color: 'var(--text-muted)'}}>Magnitude: {f.magnitude} | Injected by: {f.injected_by}</div>
@@ -1220,13 +1220,13 @@ export default function App() {
                 <div style={{maxHeight: '520px', overflowY: 'auto'}}>
                   {auditLogs.map(l => (
                     <div key={l.entry_id || l.entry_hash} style={{padding: '0.65rem 0.85rem', borderBottom: '1px solid var(--border-subtle)', display: 'grid', gridTemplateColumns: '120px 140px 1fr 140px', gap: '0.75rem', alignItems: 'center', fontSize: '0.75rem'}}>
-                      <div style={{fontFamily: 'var(--font-mono)', color: 'var(--text-dim)', fontSize: '0.7rem'}}>{new Date(l.timestamp).toLocaleTimeString()}</div>
+                      <div style={{color: 'var(--text-dim)', fontSize: '0.7rem'}}>{new Date(l.timestamp).toLocaleTimeString()}</div>
                       <div><strong style={{color: '#93c5fd'}}>{l.actor}</strong> <span style={{color: 'var(--text-dim)'}}>({l.actor_role})</span></div>
                       <div>
                         <div style={{color: 'var(--text-primary)', fontWeight: 600}}>{l.action_summary}</div>
                         <div style={{color: 'var(--text-muted)', fontSize: '0.7rem'}}>Target: <code>{l.target_resource}</code></div>
                       </div>
-                      <div style={{fontFamily: 'var(--font-mono)', fontSize: '0.68rem', color: 'var(--text-dim)', textAlign: 'right'}}>{l.entry_hash ? `${l.entry_hash.slice(0, 10)}...` : 'N/A'}</div>
+                      <div style={{fontSize: '0.68rem', color: 'var(--text-dim)', textAlign: 'right'}}>{l.entry_hash ? `${l.entry_hash.slice(0, 10)}...` : 'N/A'}</div>
                     </div>
                   ))}
                 </div>
