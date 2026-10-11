@@ -19,7 +19,7 @@ const userCredentials = {
 };
 
 export default function App() {
-  const [theme, setTheme] = useState('dark');
+  const [theme, setTheme] = useState('humanized');
   const [role, setRole] = useState('operator');
   const [token, setToken] = useState(null);
   const [activeTab, setActiveTab] = useState('overview');
@@ -412,13 +412,15 @@ export default function App() {
             </button>
 
             <div className="theme-switcher-wrapper">
-              {['dark', 'night', 'light'].map(t => (
+              {[
+                { id: 'humanized', label: 'Humanized' }
+              ].map(t => (
                 <button 
-                  key={t}
-                  className={`theme-btn ${theme === t ? 'active' : ''}`}
-                  onClick={() => setTheme(t)}
+                  key={t.id}
+                  className={`theme-btn ${theme === t.id ? 'active' : ''}`}
+                  onClick={() => setTheme(t.id)}
                 >
-                  {t.charAt(0).toUpperCase() + t.slice(1)}
+                  {t.label}
                 </button>
               ))}
             </div>
@@ -556,8 +558,8 @@ export default function App() {
                   <div className="topology-box">
                     <svg className="topology-svg" viewBox="0 0 750 300">
                       <defs>
-                        <marker id="arrow" viewBox="0 0 10 10" refX="24" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                          <path d="M 0 0 L 10 5 L 0 10 z" fill="#475569" />
+                        <marker id="arrow" viewBox="0 0 10 10" refX="26" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                          <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--topology-line, #94a3b8)" />
                         </marker>
                       </defs>
                       {edges.map((e, idx) => {
@@ -568,7 +570,7 @@ export default function App() {
                           <line 
                             key={idx} 
                             x1={src.x} y1={src.y} x2={tgt.x} y2={tgt.y}
-                            stroke="#334155" strokeWidth="1.8" strokeDasharray="4,4" markerEnd="url(#arrow)" 
+                            stroke="var(--topology-line, #94a3b8)" strokeWidth="1.8" strokeDasharray="4,4" markerEnd="url(#arrow)" 
                           />
                         );
                       })}
@@ -731,25 +733,25 @@ export default function App() {
                             <div>Traversing topology DAG & synthesizing containment strategy...</div>
                           </div>
                         ) : aiAnalysis ? (
-                          <div style={{background: 'rgba(139, 92, 246, 0.05)', border: '1px solid rgba(139, 92, 246, 0.2)', borderRadius: 'var(--radius-md)', padding: '1rem'}}>
+                          <div style={{background: 'var(--ai-panel-bg)', border: '1px solid var(--ai-panel-border)', borderRadius: 'var(--radius-md)', padding: '1.25rem'}}>
                             <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '0.75rem'}}>
                               <div>
-                                <div style={{fontSize: '0.7rem', color: '#a78bfa', textTransform: 'uppercase', fontWeight: 700}}>Hypothesis</div>
-                                <div style={{fontSize: '1.1rem', fontWeight: 800, color: '#f8fafc', fontFamily: 'var(--font-mono)'}}>
+                                <div style={{fontSize: '0.7rem', color: 'var(--accent-purple)', textTransform: 'uppercase', fontWeight: 700}}>Root Cause Hypothesis</div>
+                                <div style={{fontSize: '1.15rem', fontWeight: 800, color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', marginTop: '0.15rem'}}>
                                   {aiAnalysis.root_cause_service}
                                 </div>
                               </div>
-                              <span style={{background: 'rgba(139, 92, 246, 0.15)', color: '#c4b5fd', fontWeight: 700, fontSize: '0.72rem', padding: '0.2rem 0.5rem', borderRadius: '4px'}}>
+                              <span style={{background: 'rgba(124, 58, 237, 0.1)', color: 'var(--accent-purple)', fontWeight: 700, fontSize: '0.72rem', padding: '0.2rem 0.55rem', borderRadius: '4px', border: '1px solid rgba(124, 58, 237, 0.25)'}}>
                                 {Math.round((aiAnalysis.confidence || 0.95) * 100)}% Confidence
                               </span>
                             </div>
 
                             <div style={{marginBottom: '0.85rem'}}>
-                              <div style={{fontSize: '0.72rem', color: '#a78bfa', fontWeight: 700, marginBottom: '0.35rem', textTransform: 'uppercase'}}>Multi-Step Chain-of-Thought Reasoning</div>
-                              <div style={{background: 'rgba(0, 0, 0, 0.35)', borderRadius: 'var(--radius-sm)', padding: '0.6rem', fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: '#cbd5e1', maxHeight: '140px', overflowY: 'auto'}}>
+                              <div style={{fontSize: '0.72rem', color: 'var(--accent-purple)', fontWeight: 700, marginBottom: '0.35rem', textTransform: 'uppercase'}}>Multi-Step Chain-of-Thought Reasoning</div>
+                              <div style={{background: 'var(--ai-cot-bg)', border: '1px solid var(--ai-cot-border)', borderRadius: 'var(--radius-sm)', padding: '0.75rem', fontFamily: 'var(--font-mono)', fontSize: '0.74rem', color: 'var(--ai-cot-text)', maxHeight: '150px', overflowY: 'auto'}}>
                                 {(aiAnalysis.explanation || '').split('; ').map((step, idx) => (
-                                  <div key={idx} style={{marginBottom: '0.3rem'}}>
-                                    <span style={{color: '#a78bfa', fontWeight: 700}}>{step.includes(']') ? step.split(']')[0].replace('[', '') : `Step ${idx+1}`}</span>: {step.includes(']') ? step.split(']')[1] : step}
+                                  <div key={idx} style={{marginBottom: '0.4rem', lineHeight: '1.5'}}>
+                                    <span style={{color: 'var(--accent-purple)', fontWeight: 700}}>{step.includes(']') ? step.split(']')[0].replace('[', '') : `Step ${idx+1}`}</span>: {step.includes(']') ? step.split(']')[1] : step}
                                   </div>
                                 ))}
                               </div>
