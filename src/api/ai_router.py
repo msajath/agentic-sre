@@ -4,6 +4,7 @@ Supports step-by-step live streaming traces via SSE and local Ollama llama3.1 in
 """
 
 import json
+import logging
 from fastapi import Depends, APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
@@ -20,6 +21,7 @@ from src.services.ollama_adapter import ollama_adapter
 from src.services.topology_graph import topology_engine
 
 router = APIRouter(prefix="/api/v1/ai", tags=["Agentic AI SRE Engine"])
+logger = logging.getLogger(__name__)
 
 
 @router.get("/status")
@@ -30,7 +32,7 @@ async def get_ai_engine_status():
     health = await ollama_adapter.check_health()
     return {
         "engine": "Sequential SRE investigation with optional Ollama narration",
-        "provider": "Local Ollama (llama3.1)" if health["is_online"] and health["has_default_model"] else "Hybrid (Deterministic Synthesizer + Ollama Adapter)",
+        "provider": f"Local Ollama ({health['selected_model']})" if health["is_online"] and health.get("can_generate", bool(health["available_models"])) else "Deterministic Synthesizer (Ollama narration unavailable)",
         "chain_of_thought_enabled": False,
         "diagnostic_explanation_enabled": True,
         "human_in_the_loop_checkpoint": True,
@@ -63,13 +65,19 @@ async def stream_multi_agent_investigation(
         raise HTTPException(status_code=400, detail="Incident has no identified root cause service.")
     if not topology_engine.is_service_registered(incident.root_cause_service):
         raise HTTPException(status_code=400, detail="Incident root cause service is not registered in topology.")
+    if any(not topology_engine.is_service_registered(service) for service in incident.affected_services):
+        raise HTTPException(status_code=400, detail="Incident affected service is not registered in topology.")
     if incident.state in {IncidentState.RESOLVED, IncidentState.CLOSED}:
         raise HTTPException(status_code=409, detail="Investigation requires an active incident.")
     if not settings.simulation_enabled:
         raise HTTPException(status_code=409, detail="The approval workflow is available only in simulation mode.")
     async def event_generator():
-        async for chunk in multi_agent_orchestrator.stream_investigation(incident_id):
-            yield f"data: {json.dumps(chunk)}\n\n"
+        try:
+            async for chunk in multi_agent_orchestrator.stream_investigation(incident_id):
+                yield f"data: {json.dumps(chunk)}\n\n"
+        except Exception:
+            logger.exception("AI investigation failed for incident %s", incident_id)
+            yield "data: " + json.dumps({"type": "WORKFLOW_ERROR", "status": "FAILED", "message": "Investigation could not complete. Review service logs before retrying."}) + "\n\n"
 
     return StreamingResponse(
         event_generator(),
@@ -92,6 +100,8 @@ async def analyze_incident_with_ai(incident_id: str, current_user: User = Depend
         raise HTTPException(status_code=404, detail="Incident not found.")
     if not incident.root_cause_service:
         raise HTTPException(status_code=400, detail="Incident has no identified root cause service.")
+    if not topology_engine.is_service_registered(incident.root_cause_service):
+        raise HTTPException(status_code=400, detail="Incident root cause service is not registered in topology.")
     groups = event_correlator.correlate_active_alerts()
     diag = next((group.diagnosis for group in groups if group.root_cause_service == incident.root_cause_service), None)
     if diag is None:

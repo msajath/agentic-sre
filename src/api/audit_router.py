@@ -18,7 +18,8 @@ router = APIRouter(prefix="/api/v1/audit", tags=["Audit Ledger"])
 async def get_legacy_audit_archive(limit: int = Query(default=50, ge=1, le=200)):
     """Unverified legacy history is separate from the current verified ledger."""
     with SessionLocal() as session:
-        summary = session.get(PlatformRecordModel, "migration:postgres-audit-archive")
+        # Historical identifier already stored in PostgreSQL, not a database connection.
+        summary = session.get(PlatformRecordModel, "migration:sqlite-audit-archive")
         rows = session.query(PlatformRecordModel).filter(
             PlatformRecordModel.key.startswith("legacy-audit:")
         ).order_by(PlatformRecordModel.key).limit(limit).all()

@@ -8,6 +8,7 @@ Complies with Section 4 (Multi-Agent Architecture) and Section 5 (Incident Workf
 import asyncio
 from datetime import datetime, timezone
 import json
+import math
 from typing import Any, AsyncGenerator, Dict, List, Optional
 from pydantic import BaseModel, Field
 
@@ -62,7 +63,7 @@ class MultiAgentOrchestrator:
         service_name = incident.root_cause_service
         if not service_name:
             raise ValueError("Incident has no identified service.")
-        affected = incident.affected_services or ["order-service"]
+        affected = incident.affected_services
 
         prompt = f"""You are the Triage Agent in an enterprise SRE cluster.
 Incident: {incident.title}
@@ -82,10 +83,12 @@ Return your reasoning in 2 concise sentences."""
         if ollama_res.get("is_local_llm"):
             state.llm_engine_used = ollama_res.get("engine")
 
-        state.severity = "CRITICAL" if "crash" in incident.title.lower() or "500" in incident.title.lower() else "HIGH"
-        state.symptom_category = "LATENCY_CASCADE" if "latency" in incident.description.lower() else "ERROR_STORM"
+        state.severity = incident.severity.value
+        symptoms = f"{incident.title} {incident.description}".lower()
+        state.symptom_category = ("RESOURCE_SATURATION" if any(term in symptoms for term in ("cpu", "memory", "saturation"))
+                                  else "LATENCY_CASCADE" if "latency" in symptoms or "timeout" in symptoms else "ERROR_STORM")
         state.root_cause_service = service_name
-        state.blast_radius = sorted(set([service_name] + affected))
+        state.blast_radius = [service_name] + sorted(set(affected) - {service_name})
         state.current_node = "INVESTIGATION"
 
         step = AgentTraceStep(
@@ -108,9 +111,12 @@ Return your reasoning in 2 concise sentences."""
         tools_executed = []
         collected_evidence = []
 
-        for svc in state.blast_radius[:3]:
+        inspected_nodes = state.blast_radius[:3]
+        for svc in inspected_nodes:
             # Tool 1: get_service_health
             health_res = tool_gateway.get_service_health(svc)
+            if health_res.status != "SUCCESS":
+                raise RuntimeError("Service health evidence is unavailable.")
             tools_executed.append({
                 "tool": "get_service_health",
                 "args": {"service_name": svc},
@@ -127,6 +133,8 @@ Return your reasoning in 2 concise sentences."""
 
             # Tool 2: search_logs
             logs_res = tool_gateway.search_logs(svc, severity="ERROR", limit=3)
+            if logs_res.status != "SUCCESS":
+                raise RuntimeError("Service log evidence is unavailable.")
             tools_executed.append({
                 "tool": "search_logs",
                 "args": {"service_name": svc},
@@ -142,17 +150,21 @@ Return your reasoning in 2 concise sentences."""
 
             # Tool 3: describe_topology_dependencies
             topo_res = tool_gateway.describe_topology_dependencies(svc)
+            if topo_res.status != "SUCCESS":
+                raise RuntimeError("Service topology evidence is unavailable.")
             tools_executed.append({
                 "tool": "describe_topology_dependencies",
                 "args": {"service_name": svc},
                 "status": topo_res.status,
                 "audit_hash": topo_res.audit_hash
             })
+            collected_evidence.append({"source": "Registered topology", "service": svc,
+                                       "dependencies": topo_res.output})
 
         state.evidence_bundle = collected_evidence
         state.current_node = "ROOT_CAUSE_ANALYSIS"
 
-        thought = f"Queried Tool Gateway across {len(state.blast_radius)} nodes. Discovered anomalous error bursts and correlation delay signatures."
+        thought = f"Queried health, logs, and registered topology for {len(inspected_nodes)} services. The next stage checks these observations for anomalies."
         step = AgentTraceStep(
             node="INVESTIGATION",
             agent_name="Investigation Agent",
@@ -161,7 +173,8 @@ Return your reasoning in 2 concise sentences."""
             tools_called=tools_executed,
             output={
                 "evidence_count": len(collected_evidence),
-                "inspected_nodes": state.blast_radius
+                "inspected_nodes": inspected_nodes,
+                "uninspected_nodes": state.blast_radius[3:]
             }
         )
         state.execution_trace.append(step)
@@ -169,9 +182,16 @@ Return your reasoning in 2 concise sentences."""
 
     async def run_root_cause_node(self, state: MultiAgentWorkflowState) -> AgentTraceStep:
         """Step 3: Root-Cause Agent tests hypotheses against evidence and dependency DAG."""
-        # Detect root cause candidate with highest error or latency
+        # Rank telemetry only; logs and topology do not contain numeric health metrics.
+        def metric(value):
+            return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0 else 0.0
+
+        telemetry = [{**e, "faults": e.get("faults") if isinstance(e.get("faults"), list) else [],
+                      "error_rate": metric(e.get("error_rate")), "p95_latency_ms": metric(e.get("p95_latency_ms"))}
+                     for e in state.evidence_bundle if e.get("service") in state.blast_radius
+                     and ("error_rate" in e or "p95_latency_ms" in e or "faults" in e)]
         ranked_svcs = sorted(
-            state.evidence_bundle,
+            telemetry,
             key=lambda e: (len(e.get("faults", [])) * 10) + (e.get("error_rate", 0) * 100) + (e.get("p95_latency_ms", 0) / 100),
             reverse=True
         )
@@ -189,19 +209,24 @@ Identify the root cause service and explain the causal chain in 2 sentences."""
             system_prompt="You are an expert SRE Root Cause Causal Reasoning Agent."
         )
 
-        thought = ollama_res.get("content") or f"Forensic evidence identifies [{top_culprit}] as the causal root. Downstream latency cascades propagated across {state.blast_radius}."
+        thought = (ollama_res.get("content") if has_live_anomaly else None) or (
+            f"Simulated telemetry ranks [{top_culprit}] as the leading candidate. This heuristic does not establish causation."
+            if has_live_anomaly else "No current anomaly was observed; the incident's recorded service remains an unverified candidate. Gather fresh evidence before approval."
+        )
+        if ollama_res.get("is_local_llm") and has_live_anomaly:
+            state.llm_engine_used = ollama_res.get("engine") or "Local Ollama"
 
         state.root_cause_service = top_culprit
         state.confidence_score = 0.0 if not has_live_anomaly else (0.85 if ranked_svcs[0].get("faults") else 0.5)
         state.hypotheses = [
             {
-                "hypothesis": f"Primary service degradation in [{top_culprit}] exhausted thread pools",
+                "hypothesis": f"Observed degradation in [{top_culprit}]" if has_live_anomaly else f"Unverified incident candidate [{top_culprit}]",
                 "confidence": state.confidence_score,
-                "is_accepted": True
+                "is_accepted": has_live_anomaly
             },
             {
-                "hypothesis": "Transient network jitter on caller nodes",
-                "confidence": 1 - state.confidence_score,
+                "hypothesis": "An alternative cause requires additional evidence",
+                "confidence": 0.0,
                 "is_accepted": False
             }
         ]
@@ -216,7 +241,8 @@ Identify the root cause service and explain the causal chain in 2 sentences."""
             output={
                 "root_cause_service": state.root_cause_service,
                 "confidence": state.confidence_score,
-                "top_hypothesis": state.hypotheses[0]["hypothesis"]
+                "top_hypothesis": state.hypotheses[0]["hypothesis"],
+                "evidence_status": "ANOMALY_OBSERVED" if has_live_anomaly else "INSUFFICIENT_EVIDENCE"
             }
         )
         state.execution_trace.append(step)
@@ -224,13 +250,16 @@ Identify the root cause service and explain the causal chain in 2 sentences."""
 
     async def run_remediation_node(self, state: MultiAgentWorkflowState) -> AgentTraceStep:
         """Step 4: Remediation Agent produces reversible containment plan and halts at Human Checkpoint."""
-        root_svc = state.root_cause_service or "payment-service"
+        root_svc = state.root_cause_service
+        if not root_svc:
+            raise ValueError("Remediation requires an identified candidate service.")
 
         plan = {
             "target_service": root_svc,
             "action_type": "RESTART_SERVICE",
             "risk_level": "MEDIUM",
             "preconditions": [
+                "Confirm fresh evidence supports this action before approval",
                 f"Verify traffic routing to [{root_svc}] replica set",
                 "Ensure health probe thresholds configured"
             ],
@@ -244,6 +273,7 @@ Identify the root cause service and explain the causal chain in 2 sentences."""
         from src.models.remediation import RemediationActionType
         persisted = remediation_engine.propose_plan(state.incident_id, root_svc, RemediationActionType.RESTART_SERVICE)
         plan["plan_id"] = persisted.plan_id
+        plan["safety_blast_radius"] = sorted(set([root_svc] + persisted.safety_blast_radius))
         plan["simulation"] = True
         state.proposed_remediation = plan
         state.approval_required = True

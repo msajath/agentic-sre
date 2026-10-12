@@ -10,7 +10,7 @@ from src.services.audit_service import audit_service
 from src.services.incident_service import incident_service
 
 
-@pytest.mark.parametrize("value", [None, "", "  ", "invalid-url", "mysql://localhost/test", "postgresql://localhost/"])
+@pytest.mark.parametrize("value", [None, "", "  ", "invalid-url", "sqlite:///retired.db", "mysql://localhost/test", "postgresql://localhost/"])
 def test_database_configuration_rejects_missing_or_non_postgres_urls(value):
     with pytest.raises(ValueError, match="DATABASE_URL"):
         parse_database_url(value)
@@ -44,7 +44,7 @@ def test_legacy_history_is_reported_as_unverified_archive(client):
     summary = {"verified": False, "archived_records": 1, "reason": "Historical chain could not be verified"}
     with SessionLocal.begin() as session:
         session.add(PlatformRecordModel(key="legacy-audit:LEGACY-ENTRY", payload=json.dumps(archived)))
-        session.add(PlatformRecordModel(key="migration:postgres-audit-archive", payload=json.dumps(summary)))
+        session.add(PlatformRecordModel(key="migration:sqlite-audit-archive", payload=json.dumps(summary)))
 
     response = client.get("/api/v1/audit/legacy")
     assert response.status_code == 200

@@ -21,20 +21,28 @@ class OllamaAdapter:
 
     async def check_health(self) -> Dict[str, Any]:
         """Checks if local Ollama daemon is reachable and lists pulled models."""
+        self._active_model = self.default_model
         try:
             async with httpx.AsyncClient(timeout=3.0) as client:
                 res = await client.get(f"{self.base_url}/api/tags")
                 if res.status_code == 200:
-                    models = [m.get("name") for m in res.json().get("models", [])]
-                    has_llama = any(m.split(":")[0] == self.default_model.split(":")[0] for m in models)
-                    active_model = next((m for m in models if m.split(":")[0] == self.default_model.split(":")[0]), models[0] if models else self.default_model)
+                    data = res.json()
+                    if not isinstance(data, dict) or not isinstance(data.get("models"), list):
+                        raise ValueError("Invalid model inventory")
+                    models = [m["name"] for m in data["models"]
+                              if isinstance(m, dict) and isinstance(m.get("name"), str) and m["name"].strip()]
+                    expected_model = self.default_model if ":" in self.default_model else f"{self.default_model}:latest"
+                    active_model = next((m for m in models if m == expected_model or m == self.default_model), models[0] if models else self.default_model)
+                    has_default_model = active_model in {self.default_model, expected_model} and bool(models)
                     self._active_model = active_model
                     return {
                         "is_online": True,
                         "base_url": self.base_url,
                         "available_models": models,
-                        "has_default_model": has_llama,
-                        "selected_model": active_model
+                        "has_default_model": has_default_model,
+                        "selected_model": active_model,
+                        "can_generate": bool(models),
+                        "note": None if models else "Ollama is reachable but has no installed models; deterministic diagnostics remain available."
                     }
         except Exception:
             pass
@@ -45,6 +53,7 @@ class OllamaAdapter:
             "available_models": [],
             "has_default_model": False,
             "selected_model": self.default_model,
+            "can_generate": False,
             "note": "Local Ollama daemon is offline or unreachable. Platform will use high-speed Deterministic Heuristic Synthesizer."
         }
 
@@ -57,7 +66,7 @@ class OllamaAdapter:
     ) -> Dict[str, Any]:
         """
         Sends prompt to Ollama /api/generate.
-        If offline, gracefully returns None to trigger deterministic fallback.
+        If unavailable or invalid, returns empty content to trigger deterministic fallback.
         """
         target_model = model or getattr(self, "_active_model", self.default_model)
         payload = {
@@ -72,28 +81,37 @@ class OllamaAdapter:
         if system_prompt:
             payload["system"] = system_prompt
 
+        error_kind = "unavailable"
         try:
             async with httpx.AsyncClient(timeout=self.timeout_sec) as client:
                 res = await client.post(f"{self.base_url}/api/generate", json=payload)
                 if res.status_code == 200:
                     data = res.json()
+                    content = data.get("response") if isinstance(data, dict) else None
+                    if not isinstance(content, str) or not content.strip() or data.get("done") is False or data.get("error"):
+                        raise ValueError("Incomplete or invalid model response")
                     return {
-                        "content": data.get("response", "").strip(),
+                        "content": content.strip(),
                         "model": target_model,
                         "engine": f"Local Ollama ({target_model})",
                         "is_local_llm": True,
                         "eval_count": data.get("eval_count", 0)
                     }
-        except Exception:
-            # Fallback path
-            pass
+                error_kind = f"http_{res.status_code}"
+        except httpx.TimeoutException:
+            error_kind = "timeout"
+        except httpx.RequestError:
+            error_kind = "connection_error"
+        except (ValueError, TypeError):
+            error_kind = "invalid_response"
 
         return {
             "content": None,
             "model": target_model,
-            "engine": "Deterministic Heuristic Synthesizer (Ollama Offline)",
+            "engine": "Deterministic Heuristic Synthesizer (Ollama unavailable)",
             "is_local_llm": False,
-            "error": "Ollama connection timeout or offline"
+            "error": "Ollama narration unavailable; using deterministic diagnostics.",
+            "error_kind": error_kind
         }
 
 

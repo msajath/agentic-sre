@@ -14,8 +14,8 @@ if not _test_url:
     raise RuntimeError(_test_url_error)
 try:
     _parsed = make_url(_test_url)
-except (ArgumentError, ValueError, TypeError) as exc:
-    raise RuntimeError(_test_url_error) from exc
+except (ArgumentError, ValueError, TypeError):
+    raise RuntimeError(_test_url_error) from None
 if _parsed.drivername not in {"postgres", "postgresql", "postgresql+psycopg"} or not _parsed.database or not _parsed.database.endswith("_test"):
     raise RuntimeError(_test_url_error)
 os.environ["DATABASE_URL"] = _test_url

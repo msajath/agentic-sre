@@ -1,7 +1,6 @@
 """Deterministic rule-based diagnosis of simulated telemetry."""
 
 from datetime import datetime, timezone
-import os
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
@@ -12,9 +11,10 @@ from src.services.rule_engine import rule_engine
 
 class AIHypothesis(BaseModel):
     root_cause_service: str
-    confidence: float
+    confidence: float = Field(ge=0.0, le=1.0)
     explanation: str
-    recommended_action: RemediationActionType
+    recommended_action: Optional[RemediationActionType]
+    evidence_status: str = "ANOMALY_OBSERVED"
     blast_radius: List[str]
     mitigation_steps: List[str]
 
@@ -29,9 +29,6 @@ class SREAgentState(BaseModel):
 
 
 class SREAgentOrchestrator:
-    def __init__(self):
-        self.api_key = os.getenv("GEMINI_API_KEY") or os.getenv("OPENAI_API_KEY")
-
     def run_agentic_diagnosis(
         self,
         incident_id: str,
@@ -41,9 +38,23 @@ class SREAgentOrchestrator:
         Executes multi-step Agentic AI reasoning cycle.
         Step 1: Ingests topology context and anomaly signals.
         Step 2: Traverses causal propagation paths.
-        Step 3: Evaluates diagnostic rules and LLM reasoning.
+        Step 3: Evaluates deterministic diagnostic rules.
         Step 4: Formulates structured mitigation strategy.
         """
+        if diagnosis.confidence_score == 0 or diagnosis.evidence.root_cause_metric == "no_live_evidence":
+            return AIHypothesis(
+                root_cause_service=diagnosis.root_cause_service,
+                confidence=0.0,
+                explanation="No current diagnostic evidence supports a root cause or remediation recommendation. The recorded incident service remains an unverified candidate.",
+                recommended_action=None,
+                evidence_status="INSUFFICIENT_EVIDENCE",
+                blast_radius=diagnosis.cascading_symptoms,
+                mitigation_steps=["Collect fresh telemetry and confirm an active anomaly.",
+                                  "Review dependency paths and correlate observed symptoms.",
+                                  "Repeat diagnosis before proposing an action.",
+                                  "Require human review before executing any remediation."],
+            )
+
         rules = rule_engine.evaluate_rules(diagnosis)
         top_rule = rules[0] if rules else None
 
