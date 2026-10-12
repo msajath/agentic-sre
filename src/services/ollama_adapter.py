@@ -1,7 +1,7 @@
 """
 Local Ollama LLM Adapter with Resilient Deterministic Fallback.
-Connects to Ollama (http://localhost:11434) running open-source models (llama3.1),
-with automatic fallback to the platform rule engine if Ollama is offline.
+Connects to Ollama and selects an installed local model for optional narration,
+with automatic fallback to deterministic diagnostics when generation is unavailable.
 """
 
 from typing import Any, Dict, Optional
@@ -17,11 +17,10 @@ class OllamaAdapter:
     def __init__(self, base_url: str = OLLAMA_BASE_URL, default_model: str = DEFAULT_MODEL):
         self.base_url = base_url
         self.default_model = default_model
-        self.timeout_sec = 15.0
+        self.timeout_sec = 35.0
 
     async def check_health(self) -> Dict[str, Any]:
         """Checks if local Ollama daemon is reachable and lists pulled models."""
-        self._active_model = self.default_model
         try:
             async with httpx.AsyncClient(timeout=3.0) as client:
                 res = await client.get(f"{self.base_url}/api/tags")
@@ -34,7 +33,6 @@ class OllamaAdapter:
                     expected_model = self.default_model if ":" in self.default_model else f"{self.default_model}:latest"
                     active_model = next((m for m in models if m == expected_model or m == self.default_model), models[0] if models else self.default_model)
                     has_default_model = active_model in {self.default_model, expected_model} and bool(models)
-                    self._active_model = active_model
                     return {
                         "is_online": True,
                         "base_url": self.base_url,
@@ -68,14 +66,15 @@ class OllamaAdapter:
         Sends prompt to Ollama /api/generate.
         If unavailable or invalid, returns empty content to trigger deterministic fallback.
         """
-        target_model = model or getattr(self, "_active_model", self.default_model)
+        target_model = model or (await self.check_health())["selected_model"]
         payload = {
             "model": target_model,
             "prompt": prompt,
             "stream": False,
+            "think": False,
             "options": {
                 "temperature": temperature,
-                "num_predict": 750
+                "num_predict": 96
             }
         }
         if system_prompt:
@@ -88,7 +87,8 @@ class OllamaAdapter:
                 if res.status_code == 200:
                     data = res.json()
                     content = data.get("response") if isinstance(data, dict) else None
-                    if not isinstance(content, str) or not content.strip() or data.get("done") is False or data.get("error"):
+                    if (not isinstance(content, str) or not content.strip() or data.get("done") is False
+                            or data.get("done_reason") == "length" or data.get("error")):
                         raise ValueError("Incomplete or invalid model response")
                     return {
                         "content": content.strip(),

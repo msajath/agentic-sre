@@ -1,0 +1,796 @@
+{
+  "info": {
+    "name": "Agentic SRE PostgreSQL API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Run against a disposable PostgreSQL database. Creates and resolves/rejects simulated incidents."
+  },
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/healthz"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Health returns 200\", () => pm.response.to.have.status(200));",
+              "pm.test('live', () => pm.expect(pm.response.json().status).to.eql('ok'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Readiness",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/readyz"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Readiness returns 200\", () => pm.response.to.have.status(200));",
+              "pm.test('ready', () => pm.expect(pm.response.json().status).to.eql('ready'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Incidents require authentication",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/api/v1/incidents"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Incidents require authentication returns 401\", () => pm.response.to.have.status(401));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Invalid password rejected",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/auth/login",
+        "body": {
+          "mode": "raw",
+          "raw": "{\"username\": \"admin\", \"password\": \"incorrect-postman-test-password\"}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Invalid password rejected returns 401\", () => pm.response.to.have.status(401));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Login admin",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/auth/login",
+        "body": {
+          "mode": "raw",
+          "raw": "{\"username\": \"{{adminUsername}}\", \"password\": \"{{adminPassword}}\"}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Login admin returns 200\", () => pm.response.to.have.status(200));",
+              "pm.test('admin token and role', () => { const data=pm.response.json(); pm.expect(data.access_token).to.be.a('string').and.not.empty; pm.expect(data.role).to.eql('ADMIN'); });",
+              "pm.environment.set('adminToken', pm.response.json().access_token);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Login operator",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/auth/login",
+        "body": {
+          "mode": "raw",
+          "raw": "{\"username\": \"{{operatorUsername}}\", \"password\": \"{{operatorPassword}}\"}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Login operator returns 200\", () => pm.response.to.have.status(200));",
+              "pm.test('operator token and role', () => { const data=pm.response.json(); pm.expect(data.access_token).to.be.a('string').and.not.empty; pm.expect(data.role).to.eql('OPERATOR'); });",
+              "pm.environment.set('operatorToken', pm.response.json().access_token);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Login viewer",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/auth/login",
+        "body": {
+          "mode": "raw",
+          "raw": "{\"username\": \"{{viewerUsername}}\", \"password\": \"{{viewerPassword}}\"}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Login viewer returns 200\", () => pm.response.to.have.status(200));",
+              "pm.test('viewer token and role', () => { const data=pm.response.json(); pm.expect(data.access_token).to.be.a('string').and.not.empty; pm.expect(data.role).to.eql('VIEWER'); });",
+              "pm.environment.set('viewerToken', pm.response.json().access_token);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Viewer profile",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{viewerToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/auth/me"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Viewer profile returns 200\", () => pm.response.to.have.status(200));",
+              "pm.test('viewer identity', () => pm.expect(pm.response.json().role).to.eql('VIEWER'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "AI engine status",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{operatorToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/ai/status"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"AI engine status returns 200\", () => pm.response.to.have.status(200));",
+              "pm.test('AI operational with provider status', () => { const data=pm.response.json(); pm.expect(data.status).to.eql('operational'); pm.expect(data.ollama.is_online).to.be.a('boolean'); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Ollama status",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{operatorToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/ai/ollama-status"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Ollama status returns 200\", () => pm.response.to.have.status(200));",
+              "pm.test('model inventory reported', () => pm.expect(pm.response.json().available_models).to.be.an('array'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Agent catalog",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{viewerToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/agents"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Agent catalog returns 200\", () => pm.response.to.have.status(200));",
+              "pm.test('four registered stages', () => pm.expect(pm.response.json()).to.have.length(4));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Topology",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{viewerToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/topology"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Topology returns 200\", () => pm.response.to.have.status(200));",
+              "pm.test('service graph', () => pm.expect(pm.response.json().nodes.length).to.be.above(0));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Telemetry services",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{viewerToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/telemetry/services"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Telemetry services returns 200\", () => pm.response.to.have.status(200));",
+              "pm.test('service summaries', () => pm.expect(pm.response.json()).to.be.an('array'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Viewer cannot create incident",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{viewerToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/incidents?title=Denied%20incident&description=Viewer%20cannot%20write"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Viewer cannot create incident returns 403\", () => pm.response.to.have.status(403));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Invalid incident severity rejected",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{operatorToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/incidents?title=Invalid%20incident&description=Invalid%20severity%20test&severity=NOT_A_SEVERITY"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Invalid incident severity rejected returns 422\", () => pm.response.to.have.status(422));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Create incident",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{operatorToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/incidents?title=Postman%20payment%20crash&description=Payment%20service%20crash%20affects%20orders&severity=HIGH&root_cause_service=payment-service"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Create incident returns 201\", () => pm.response.to.have.status(201));",
+              "pm.test('incident persisted', () => { const data=pm.response.json(); pm.expect(data.incident_id).to.be.a('string'); pm.expect(data.root_cause_service).to.eql('payment-service'); });",
+              "pm.environment.set('incidentId', pm.response.json().incident_id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Analyze incident",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{operatorToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/ai/analyze-incident/{{incidentId}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Analyze incident returns 200\", () => pm.response.to.have.status(200));",
+              "pm.test('diagnosis response', () => { const data=pm.response.json(); pm.expect(data.root_cause_service).to.eql('payment-service'); pm.expect(data.explanation).to.be.a('string').and.not.empty; });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Inject simulated fault",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{adminToken}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/chaos/inject",
+        "body": {
+          "mode": "raw",
+          "raw": "{\"service_name\": \"payment-service\", \"fault_type\": \"SERVICE_CRASH\", \"duration_sec\": 120}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Inject simulated fault returns 201\", () => pm.response.to.have.status(201));",
+              "pm.test('fault targets payment', () => pm.expect(pm.response.json().service_name).to.eql('payment-service'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Viewer cannot start agent workflow",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{viewerToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/ai/stream-investigation/{{incidentId}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Viewer cannot start agent workflow returns 403\", () => pm.response.to.have.status(403));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Stream all agent stages to human gate",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{operatorToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/ai/stream-investigation/{{incidentId}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Stream all agent stages to human gate returns 200\", () => pm.response.to.have.status(200));",
+              "const events=pm.response.text().split(/\\r?\\n/).filter(line => line.startsWith('data: ')).map(line => JSON.parse(line.slice(6)));",
+              "const stages=events.filter(event => event.type==='NODE_COMPLETE').map(event => event.step.node);",
+              "pm.test('triage, investigation, and RCA completed', () => pm.expect(stages).to.eql(['TRIAGE','INVESTIGATION','ROOT_CAUSE_ANALYSIS']));",
+              "const checkpoint=events.find(event => event.type==='WORKFLOW_CHECKPOINT');",
+              "pm.test('remediation pauses for human approval', () => { pm.expect(checkpoint).to.exist; pm.expect(checkpoint.step.node).to.eql('REMEDIATION'); pm.expect(checkpoint.state.proposed_remediation.plan_id).to.be.a('string'); });",
+              "if (checkpoint) pm.environment.set('planId', checkpoint.state.proposed_remediation.plan_id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Plan pending approval",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{viewerToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/remediation/plans/{{planId}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Plan pending approval returns 200\", () => pm.response.to.have.status(200));",
+              "pm.test('plan pending', () => pm.expect(pm.response.json().state).to.eql('PENDING_APPROVAL'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Viewer cannot approve",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{viewerToken}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/remediation/plans/{{planId}}/approve",
+        "body": {
+          "mode": "raw",
+          "raw": "{\"reason\": \"Unauthorized viewer approval\"}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Viewer cannot approve returns 403\", () => pm.response.to.have.status(403));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin approves simulated recovery",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{adminToken}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/remediation/plans/{{planId}}/approve",
+        "body": {
+          "mode": "raw",
+          "raw": "{\"reason\": \"Validated simulated fault, evidence, and affected services\"}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Admin approves simulated recovery returns 200\", () => pm.response.to.have.status(200));",
+              "pm.test('approved recovery verified', () => pm.expect(pm.response.json().state).to.eql('VERIFIED_SUCCESSFUL'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Incident resolved",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{viewerToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/incidents/{{incidentId}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Incident resolved returns 200\", () => pm.response.to.have.status(200));",
+              "pm.test('incident resolved', () => pm.expect(pm.response.json().state).to.eql('RESOLVED'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Create incident for rejection",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{operatorToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/incidents?title=Postman%20rejection%20path&description=Human%20rejects%20unsafe%20recovery&root_cause_service=payment-service"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Create incident for rejection returns 201\", () => pm.response.to.have.status(201));",
+              "pm.environment.set('rejectIncidentId', pm.response.json().incident_id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Propose plan for rejection",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{operatorToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/remediation/auto-propose/{{rejectIncidentId}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Propose plan for rejection returns 201\", () => pm.response.to.have.status(201));",
+              "pm.test('plan proposed', () => pm.expect(pm.response.json().state).to.eql('PENDING_APPROVAL'));",
+              "pm.environment.set('rejectPlanId', pm.response.json().plan_id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin rejects plan",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{adminToken}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/remediation/plans/{{rejectPlanId}}/reject",
+        "body": {
+          "mode": "raw",
+          "raw": "{\"reason\": \"Insufficient current evidence to approve\"}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Admin rejects plan returns 200\", () => pm.response.to.have.status(200));",
+              "pm.test('rejection persisted', () => pm.expect(pm.response.json().state).to.eql('REJECTED'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Audit chain verifies",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{viewerToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/audit/verify"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Audit chain verifies returns 200\", () => pm.response.to.have.status(200));",
+              "pm.test('audit chain intact', () => pm.expect(pm.response.json().is_valid).to.eql(true));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Legacy archive endpoint",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{viewerToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/audit/legacy"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Legacy archive endpoint returns 200\", () => pm.response.to.have.status(200));",
+              "pm.test('legacy history labeled unverified', () => pm.expect(pm.response.json().verified).to.eql(false));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Incident list includes created records",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{viewerToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/incidents"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Incident list includes created records returns 200\", () => pm.response.to.have.status(200));",
+              "pm.test('created incidents visible', () => pm.expect(pm.response.json().length).to.be.at.least(2));"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

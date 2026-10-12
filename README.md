@@ -129,6 +129,7 @@ chain; external trusted checkpoints/backups are needed for that guarantee.
 .\.venv\Scripts\python.exe scripts/test_postgres.py
 .\.venv\Scripts\python.exe -m bandit -r src -ll -ii
 .\.venv\Scripts\python.exe -m flake8 src scripts tests --select=F
+.\.venv\Scripts\python.exe scripts/run_postman.py
 npm run db:validate
 npm run db:check
 cd frontend
@@ -138,5 +139,8 @@ npm run build
 
 All backend tests use `TEST_DATABASE_URL` from the process environment or the project's `.env`.
 They drop application tables only in that dedicated test database and refuse application database names.
+The Postman runner creates and removes its own disposable local PostgreSQL database, then writes
+request and assertion counts to `data/postman-summary.json`. It does not modify the application database.
+See `docs/verification-2026-10-12.md` for the latest check results and remaining limits.
 CI checks PostgreSQL, Prisma migrations/client, backend security, frontend lint/build,
 and the Docker stack.

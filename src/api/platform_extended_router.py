@@ -53,8 +53,12 @@ async def search_knowledge_base(query: str = Query(min_length=2, max_length=256)
 
 @router.get("/agents")
 async def list_registered_agents():
+    from src.services.ollama_adapter import ollama_adapter
+    model_health = await ollama_adapter.check_health()
+    narration = (f"Optional Ollama ({model_health['selected_model']})"
+                 if model_health.get("can_generate") else "Deterministic Python")
     return [{"id": name.lower().replace(" ", "-"), "name": name, "role_type": "Workflow stage",
-             "model": settings.ollama_model if name in {"Triage", "Root Cause"} else "Deterministic Python",
+             "model": narration if name in {"Triage", "Root Cause"} else "Deterministic Python",
              "temperature": 0.1, "allowlisted_tools": tools, "status": "AVAILABLE",
              "primary_responsibility": responsibility, "total_invocations": None}
             for name, tools, responsibility in [

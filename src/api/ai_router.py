@@ -32,7 +32,9 @@ async def get_ai_engine_status():
     health = await ollama_adapter.check_health()
     return {
         "engine": "Sequential SRE investigation with optional Ollama narration",
-        "provider": f"Local Ollama ({health['selected_model']})" if health["is_online"] and health.get("can_generate", bool(health["available_models"])) else "Deterministic Synthesizer (Ollama narration unavailable)",
+        "provider": (f"Optional Ollama ({health['selected_model']}) with deterministic fallback"
+                     if health["is_online"] and health.get("can_generate", bool(health["available_models"]))
+                     else "Deterministic Synthesizer (Ollama narration unavailable)"),
         "chain_of_thought_enabled": False,
         "diagnostic_explanation_enabled": True,
         "human_in_the_loop_checkpoint": True,
