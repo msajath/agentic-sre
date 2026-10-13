@@ -19,6 +19,16 @@ class OllamaAdapter:
         self.default_model = default_model
         self.timeout_sec = 35.0
 
+    async def public_health(self) -> Dict[str, Any]:
+        """Return provider health without exposing endpoint or model inventory details."""
+        health = await self.check_health()
+        return {
+            "is_online": health["is_online"],
+            "has_default_model": health["has_default_model"],
+            "can_generate": health["can_generate"],
+            "note": health["note"],
+        }
+
     async def check_health(self) -> Dict[str, Any]:
         """Checks if local Ollama daemon is reachable and lists pulled models."""
         try:
@@ -60,7 +70,8 @@ class OllamaAdapter:
         prompt: str,
         system_prompt: Optional[str] = None,
         model: Optional[str] = None,
-        temperature: float = 0.1
+        temperature: float = 0.1,
+        response_format: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Sends prompt to Ollama /api/generate.
@@ -79,6 +90,8 @@ class OllamaAdapter:
         }
         if system_prompt:
             payload["system"] = system_prompt
+        if response_format:
+            payload["format"] = response_format
 
         error_kind = "unavailable"
         try:

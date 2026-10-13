@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import './index.css';
+import AuthScreen from './AuthScreen.jsx';
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || window.location.origin).replace(/\/$/, "");
 const roleNames = { ADMIN: "admin", SRE_LEAD: "lead", OPERATOR: "operator", VIEWER: "viewer" };
@@ -17,10 +18,6 @@ export default function App() {
   const [role, setRole] = useState('anonymous');
   const [token, setToken] = useState(null);
   const [username, setUsername] = useState('');
-  const [loginName, setLoginName] = useState('');
-  const [loginPassword, setLoginPassword] = useState('');
-  const [loginError, setLoginError] = useState('');
-  const [loginBusy, setLoginBusy] = useState(false);
   const [apiError, setApiError] = useState('');
   const [activeTab, setActiveTab] = useState('overview');
   const [wsStatus, setWsStatus] = useState('CONNECTING');
@@ -64,7 +61,6 @@ export default function App() {
 
   // Modals & Utilities
   const [modalConfig, setModalConfig] = useState(null);
-  const [showLoginModal, setShowLoginModal] = useState(true);
   const [showTourModal, setShowTourModal] = useState(false);
   const [show403Screen, setShow403Screen] = useState(false);
 
@@ -75,13 +71,14 @@ export default function App() {
 
   const clearSession = useCallback(() => {
     setToken(null); setRole('anonymous'); setUsername('');
+    window.history.replaceState(null, '', '/login');
     setServices([]); setEdges([]); setIncident(null); setDiagnosis(null);
     setActiveFaults([]); setIncidentsList([]); setRemediationPlans([]); setAuditLogs([]);
     setAiAnalysis(null); setSelectedIncidentDetail(null); setAuditVerification(null);
     setLegacyAudit(null);
     setBenchmarkData({ metrics: null, scenarios: [] }); setSelectedScenarioReplay(null);
     setKnowledgeDocs([]); setRagSearchResults(null); setAgentsList([]);
-    setServicesCatalog([]); setPlatformSettings(null); setShowLoginModal(true);
+    setServicesCatalog([]); setPlatformSettings(null);
   }, []);
 
   const getAuthHeaders = useCallback(() => ({
@@ -102,19 +99,14 @@ export default function App() {
     } catch (error) { setApiError(error.message); throw error; }
   }, [getAuthHeaders, clearSession]);
 
-  const handleLogin = async (event) => {
-    event.preventDefault(); setLoginBusy(true); setLoginError('');
-    try {
-      const response = await fetch(`${API_BASE}/api/v1/auth/login`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: loginName, password: loginPassword }),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Sign in failed.');
-      clearSession(); setRole(roleNames[data.role]); setUsername(data.username); setToken(data.access_token);
-      setLoginPassword(''); setApiError(''); setShow403Screen(false); setShowLoginModal(false);
-    } catch (error) { setLoginError(error.message); }
-    finally { setLoginBusy(false); }
+  const handleAuthenticated = (data) => {
+    clearSession();
+    window.history.replaceState(null, '', '/');
+    setRole(roleNames[data.role]);
+    setUsername(data.username);
+    setToken(data.access_token);
+    setApiError('');
+    setShow403Screen(false);
   };
 
   useEffect(() => {
@@ -407,6 +399,8 @@ export default function App() {
   const avgError = services.length > 0 ? services.reduce((acc, s) => acc + (s.error_rate || 0), 0) / services.length : 0;
   const healthScore = Math.max(0, 100 - (avgError * 300) - (avgP95 > 500 ? 15 : 0));
 
+  if (!token) return <AuthScreen apiBase={API_BASE} onAuthenticated={handleAuthenticated} />;
+
   return (
     <div className="app-container">
       {/* Top Header */}
@@ -436,13 +430,8 @@ export default function App() {
               System Tour
             </button>
 
-            <button 
-              className="btn btn-secondary" 
-              style={{ fontSize: '0.72rem', padding: '0.25rem 0.55rem' }}
-              onClick={() => setShowLoginModal(true)}
-            >
-              {token ? `${username} (${role})` : 'Sign in'}
-            </button>
+            <span className="account-name">{username} ({role})</span>
+            <button className="btn btn-secondary" onClick={clearSession}>Sign out</button>
 
             <button 
               className="btn btn-danger" 
@@ -1344,31 +1333,6 @@ export default function App() {
           </>
         )}
       </main>
-
-      {showLoginModal && (
-        <div className="modal-backdrop open">
-          <div className="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="login-title" style={{maxWidth: '480px'}}>
-            <h3 id="login-title">Sign in to Agentic SRE</h3>
-            <p>Your account determines your permissions.</p>
-            <form onSubmit={handleLogin}>
-              <div className="form-group">
-                <label htmlFor="login-name" className="form-label">Username</label>
-                <input id="login-name" className="form-control" autoComplete="username" value={loginName} onChange={event => setLoginName(event.target.value)} required />
-              </div>
-              <div className="form-group">
-                <label htmlFor="login-password" className="form-label">Password</label>
-                <input id="login-password" className="form-control" type="password" autoComplete="current-password" value={loginPassword} onChange={event => setLoginPassword(event.target.value)} required />
-              </div>
-              {loginError && <p role="alert" style={{color: '#ef4444'}}>{loginError}</p>}
-              <div style={{display: 'flex', gap: '0.5rem', marginTop: '1rem'}}>
-                <button className="btn btn-primary" type="submit" disabled={loginBusy}>{loginBusy ? 'Signing in...' : 'Sign in'}</button>
-                {token && <button className="btn btn-secondary" type="button" onClick={() => setShowLoginModal(false)}>Cancel</button>}
-                {token && <button className="btn btn-secondary" type="button" onClick={clearSession}>Sign out</button>}
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
 
       {/* Onboarding Tour Modal */}
       {showTourModal && (

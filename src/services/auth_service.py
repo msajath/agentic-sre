@@ -40,14 +40,25 @@ class AuthService:
             ):
                 raise ValueError("No active administrator. Set BOOTSTRAP_ADMIN_PASSWORD or provision one with python -m src.manage.")
 
-    def _user_row(self, username: str, password: str, role: UserRole) -> UserModel:
+    def _user_row(self, username: str, password: str, role: UserRole,
+                  email: str | None = None, full_name: str | None = None) -> UserModel:
         if not 12 <= len(password) <= 128:
             raise ValueError("Passwords must contain 12 to 128 characters.")
         salt = secrets.token_hex(16)
-        user = User(username=username.lower(), email=f"{username}@sre.example.com",
+        user = User(username=username.lower(), email=(email or f"{username}@sre.example.com").lower(),
                     role=role, salt=salt, hashed_password=self._hash_password(password, salt),
-                    full_name=username)
+                    full_name=full_name or username)
         return UserModel(**user.model_dump(mode="json"))
+
+    def register_viewer(self, username: str, email: str, full_name: str, password: str) -> User:
+        """Create a new read-only account; only local administration grants elevated roles."""
+        row = self._user_row(username, password, UserRole.VIEWER, email, full_name)
+        with SessionLocal.begin() as session:
+            session.add(row)
+            session.flush()
+            return User(username=row.username, email=row.email, role=row.role,
+                        hashed_password=row.hashed_password, salt=row.salt,
+                        full_name=row.full_name, is_active=row.is_active)
 
     def provision_user(self, username: str, password: str, role: UserRole) -> None:
         """Local provisioning, also usable to rotate or reactivate accounts."""

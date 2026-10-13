@@ -3,6 +3,9 @@ import json
 import os
 import secrets
 from typing import List, Optional
+from urllib.parse import urlsplit
+
+from ipaddress import ip_address
 from pydantic import BaseModel, Field, model_validator
 from src import environment as _environment  # noqa: F401 - load local configuration before reading variables
 
@@ -40,6 +43,23 @@ class Settings(BaseModel):
             raise ValueError("The old development JWT signing key is prohibited.")
         if "*" in self.allowed_origins:
             raise ValueError("ALLOWED_ORIGINS must list explicit origins.")
+        parsed_ollama_url = urlsplit(self.ollama_base_url)
+        if parsed_ollama_url.scheme not in {"http", "https"} or not parsed_ollama_url.hostname:
+            raise ValueError("OLLAMA_BASE_URL must be an HTTP(S) URL with a hostname.")
+        if parsed_ollama_url.username or parsed_ollama_url.password:
+            raise ValueError("OLLAMA_BASE_URL must not contain credentials.")
+        if self.environment.lower() == "production" and parsed_ollama_url.scheme != "https":
+            raise ValueError("Production OLLAMA_BASE_URL must use HTTPS.")
+        if parsed_ollama_url.scheme == "http":
+            hostname = parsed_ollama_url.hostname.lower().rstrip(".")
+            local_names = {"localhost", "host.docker.internal"}
+            is_loopback = False
+            try:
+                is_loopback = ip_address(hostname).is_loopback
+            except ValueError:
+                pass
+            if hostname not in local_names and not is_loopback:
+                raise ValueError("Remote Ollama endpoints must use HTTPS.")
         return self
 
     @classmethod

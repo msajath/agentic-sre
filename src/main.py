@@ -102,6 +102,8 @@ app.include_router(ws_router)
 
 
 # 4. API Info Root Endpoint
+@app.get("/login", tags=["Frontend"])
+@app.get("/signup", tags=["Frontend"])
 @app.get("/", tags=["API Root"])
 async def root():
     if (FRONTEND_DIR / "index.html").is_file():

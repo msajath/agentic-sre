@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 
 class AuditEventType(str, Enum):
+    AUTH_REGISTER = "AUTH_REGISTER"
     AUTH_LOGIN = "AUTH_LOGIN"
     AUTH_FAILURE = "AUTH_FAILURE"
     CHAOS_INJECT = "CHAOS_INJECT"

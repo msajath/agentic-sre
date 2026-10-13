@@ -39,6 +39,9 @@ Use it again to rotate/reactivate an account, or provision an operator, lead or 
 `--role OPERATOR`, `--role SRE_LEAD` or `--role VIEWER`. Existing accounts that still use the old public
 demo passwords are disabled at startup. Explicit `BOOTSTRAP_ADMIN_PASSWORD` can provision the
 first administrator or rotate the legacy admin account. It does not overwrite a custom password.
+The frontend has separate Login and Sign Up screens. Self-registered accounts receive read-only
+Viewer access; elevated roles still require administrator provisioning. Sign Up requires a unique
+username and email address and a password of at least 12 characters.
 
 Previously imported audit history is stored in PostgreSQL under `legacy-audit:` keys in
 `platform_records`, marked unverified. `/api/v1/audit/legacy` exposes the separate archive after

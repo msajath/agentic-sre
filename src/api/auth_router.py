@@ -6,9 +6,10 @@ Handles secure token issuance, credentials verification, and RBAC profile retrie
 import threading
 import time
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy.exc import IntegrityError
 
 from src.models.audit import AuditEventType
-from src.models.auth import LoginRequest, TokenResponse, User, UserPublic
+from src.models.auth import LoginRequest, RegisterRequest, TokenResponse, User, UserPublic
 from src.services.audit_service import audit_service
 from src.services.auth_service import auth_service, get_current_user
 
@@ -43,6 +44,29 @@ class LoginAttemptLimiter:
 
 
 login_attempt_limiter = LoginAttemptLimiter()
+registration_attempt_limiter = LoginAttemptLimiter()
+
+
+@router.post("/register", response_model=TokenResponse, status_code=201)
+async def register(request: RegisterRequest, http_request: Request):
+    """Allow self-registration with Viewer permissions only."""
+    key = (http_request.client.host if http_request.client else "unknown", "registration")
+    if registration_attempt_limiter.blocked(key):
+        raise HTTPException(status_code=429, detail="Too many registration attempts. Try again in one minute.",
+                            headers={"Retry-After": "60"})
+    registration_attempt_limiter.failure(key)
+    try:
+        user = auth_service.register_viewer(request.username, request.email, request.full_name, request.password)
+    except IntegrityError as exc:
+        raise HTTPException(status_code=409, detail="Username or email is already registered.") from exc
+    audit_service.record_event(
+        event_type=AuditEventType.AUTH_REGISTER,
+        actor=user.username,
+        actor_role=user.role.value,
+        target_resource="auth-gateway",
+        action_summary=f"Viewer account {user.username} registered.",
+    )
+    return auth_service.create_access_token(user)
 
 
 @router.post("/login", response_model=TokenResponse)

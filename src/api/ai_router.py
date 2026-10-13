@@ -29,11 +29,11 @@ async def get_ai_engine_status():
     """
     Returns AI reasoning engine operational state and model provider status.
     """
-    health = await ollama_adapter.check_health()
+    health = await ollama_adapter.public_health()
     return {
         "engine": "Sequential SRE investigation with optional Ollama narration",
-        "provider": (f"Optional Ollama ({health['selected_model']}) with deterministic fallback"
-                     if health["is_online"] and health.get("can_generate", bool(health["available_models"]))
+        "provider": ("Optional local Ollama with deterministic fallback"
+                     if health["is_online"] and health.get("can_generate", False)
                      else "Deterministic Synthesizer (Ollama narration unavailable)"),
         "chain_of_thought_enabled": False,
         "diagnostic_explanation_enabled": True,
@@ -48,7 +48,7 @@ async def get_ollama_status():
     """
     Inspects status of local Ollama runtime and available models.
     """
-    return await ollama_adapter.check_health()
+    return await ollama_adapter.public_health()
 
 
 @router.get("/stream-investigation/{incident_id}")

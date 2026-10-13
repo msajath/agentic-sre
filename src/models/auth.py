@@ -4,7 +4,7 @@ Protects sensitive platform actions behind strict cryptographic tokens and scope
 """
 
 from enum import Enum
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
 class UserRole(str, Enum):
@@ -35,6 +35,23 @@ class UserPublic(BaseModel):
 class LoginRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=32)
     password: str = Field(..., min_length=6, max_length=128)
+
+
+class RegisterRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    username: str = Field(..., min_length=3, max_length=32, pattern=r"^[a-zA-Z0-9_\-]+$")
+    email: EmailStr = Field(..., max_length=128)
+    full_name: str = Field(..., min_length=1, max_length=128)
+    password: str = Field(..., min_length=12, max_length=128)
+
+    @field_validator("full_name")
+    @classmethod
+    def normalize_full_name(cls, value: str) -> str:
+        name = value.strip()
+        if not name:
+            raise ValueError("Full name is required.")
+        return name
 
 
 class TokenResponse(BaseModel):
