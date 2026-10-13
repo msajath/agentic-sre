@@ -30,7 +30,8 @@ bash deploy/deploy.sh
 This command validates Compose configuration, pulls the versioned images, takes a verified
 PostgreSQL backup if the database is already running, applies Prisma migrations, starts the
 single API replica, and checks `/readyz`, `/login`, and `/signup`. It does not automatically
-roll back a failed migration. The API binds to the host's loopback interface on `SRE_HOST_PORT`
+roll back a failed migration. CI also exercises this update path with locally built images and
+`SRE_SKIP_PULL=true`; leave that setting unset on a real VPS. The API binds to the host's loopback interface on `SRE_HOST_PORT`
 (8000 by default); put a TLS reverse proxy in front of it for remote access. Do not publish the
 PostgreSQL service port. Without a domain or proxy, use an SSH tunnel to inspect the private
 deployment: `ssh -L 8000:127.0.0.1:8000 user@host`, then open `http://localhost:8000`.

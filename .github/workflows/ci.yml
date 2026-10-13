@@ -155,7 +155,7 @@ jobs:
           PY
           touch "$RUNNER_TEMP/agentic-sre.env"
           chmod 600 "$RUNNER_TEMP/agentic-sre.env"
-          SRE_ENV_FILE="$RUNNER_TEMP/agentic-sre.env" SRE_BACKUP_DIR="$RUNNER_TEMP/agentic-sre-backups" bash deploy/backup.sh
+          SRE_SKIP_PULL=true SRE_ENV_FILE="$RUNNER_TEMP/agentic-sre.env" SRE_BACKUP_DIR="$RUNNER_TEMP/agentic-sre-backups" bash deploy/deploy.sh
 
   publish-images:
     name: Publish versioned images to GHCR

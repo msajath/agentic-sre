@@ -16,7 +16,9 @@ fi
 
 compose=(docker compose --project-name agentic-sre --env-file "$env_file" -f "$deploy_dir/compose.vps.yml")
 "${compose[@]}" config --quiet
-"${compose[@]}" pull
+if [[ "${SRE_SKIP_PULL:-false}" != true ]]; then
+  "${compose[@]}" pull
+fi
 
 postgres_container="$("${compose[@]}" ps -q postgres)"
 if [[ -n "$postgres_container" && "$(docker inspect -f '{{.State.Running}}' "$postgres_container")" == true ]]; then
