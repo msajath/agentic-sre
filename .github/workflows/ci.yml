@@ -37,6 +37,9 @@ jobs:
       - name: Check Python Imports and Undefined Names
         run: python -m flake8 src scripts tests --select=F
 
+      - name: Check Deployment Shell Scripts
+        run: bash -n deploy/backup.sh deploy/deploy.sh
+
   postgres-checks:
     name: Test Backend with PostgreSQL and Prisma
     runs-on: ubuntu-latest
@@ -129,8 +132,12 @@ jobs:
           export BOOTSTRAP_ADMIN_PASSWORD="$(openssl rand -hex 24)"
           export POSTGRES_PASSWORD="$(openssl rand -hex 24)"
           export DOCKER_DATABASE_URL="postgresql://agentic_sre:${POSTGRES_PASSWORD}@postgres:5432/agentic_sre"
-          trap 'docker compose logs; docker compose down -v' EXIT
-          docker compose up -d --no-build
+          export SRE_IMAGE_BASE=agentic-sre
+          export SRE_IMAGE_TAG=0.1.0
+          docker compose -f docker-compose.yml config --quiet
+          docker compose --project-name agentic-sre -f deploy/compose.vps.yml config --quiet
+          trap 'docker compose --project-name agentic-sre -f deploy/compose.vps.yml logs; docker compose --project-name agentic-sre -f deploy/compose.vps.yml down -v' EXIT
+          docker compose --project-name agentic-sre -f deploy/compose.vps.yml up -d --no-build
           for attempt in {1..90}; do
             if curl --fail --silent http://localhost:8000/readyz; then break; fi
             sleep 1
@@ -146,6 +153,9 @@ jobs:
           with urllib.request.urlopen(request) as response:
               assert json.load(response)["access_token"]
           PY
+          touch "$RUNNER_TEMP/agentic-sre.env"
+          chmod 600 "$RUNNER_TEMP/agentic-sre.env"
+          SRE_ENV_FILE="$RUNNER_TEMP/agentic-sre.env" SRE_BACKUP_DIR="$RUNNER_TEMP/agentic-sre-backups" bash deploy/backup.sh
 
   publish-images:
     name: Publish versioned images to GHCR

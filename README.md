@@ -120,8 +120,9 @@ Update allowed browser origins for your ingress. Use `/healthz` for liveness and
 `/readyz` for database/simulator readiness.
 
 See [the operations runbook](docs/operations.md) for release images, deployment checks,
-database backups, upgrade and recovery steps. Version tags run the same CI gates before publishing
-the API and migration images to GHCR; deployment to a specific cluster remains an operator action.
+database backups, upgrade and recovery steps. The `deploy/` bundle provides a Docker-host Compose
+file, private environment template, verified backup command, and deployment command. Version tags
+run the same CI gates before publishing the API and migration images to GHCR.
 
 Run **one worker and one replica**: simulation state is process-local. This is a demonstration
 platform, not a horizontally scalable production control plane. Kubernetes uses `Recreate` updates

@@ -12,14 +12,35 @@ gates and, after they pass, publishes `ghcr.io/<owner>/<repo>:<tag>` and
 `ghcr.io/<owner>/<repo>-database:<tag>` with GitHub Actions' package token. No image is published
 from a failed pipeline. Confirm the image digests in the workflow output before deployment.
 
-For a Docker host, provide a private `.env` with `SECRET_KEY`, `POSTGRES_PASSWORD`,
-`DOCKER_DATABASE_URL`, and an initial `BOOTSTRAP_ADMIN_PASSWORD` (or provision the admin account
-beforehand). Set `ALLOWED_ORIGINS` to the actual browser origin. Set `DOCKER_OLLAMA_BASE_URL` to a
-trusted HTTPS inference proxy if model narration is needed. The default example hostname is only
-a placeholder; the app falls back to deterministic narration if it cannot connect. Run
-`docker compose config --quiet`, then `docker compose up -d --build`. The API binds to the host's
-loopback interface on `SRE_HOST_PORT` (8000 by default); put a TLS reverse proxy in front of it for remote access. Check
-`/readyz`, `/login`, and `/signup`. Do not publish the PostgreSQL service port.
+For a Docker host, copy the `deploy/` directory to the host and make `deploy/.env` from
+`deploy/vps.env.example`. Fill in a stable random `SECRET_KEY`, a URL-safe `POSTGRES_PASSWORD`,
+the matching `DOCKER_DATABASE_URL`, and an initial `BOOTSTRAP_ADMIN_PASSWORD` (or provision the
+admin account beforehand). Set `SRE_IMAGE_TAG` to a tag that has passed the publishing job.
+Keep `deploy/.env` out of Git and run `chmod 600 deploy/.env`. If the GHCR packages are private,
+log in to `ghcr.io` on the host with a read-only package token before deployment.
+
+Set `ALLOWED_ORIGINS` to the actual browser origin. Set `DOCKER_OLLAMA_BASE_URL` to a trusted
+HTTPS inference proxy if model narration is needed. The default example hostname is only a
+placeholder; the app falls back to deterministic narration if it cannot connect. Deploy with:
+
+```bash
+bash deploy/deploy.sh
+```
+
+This command validates Compose configuration, pulls the versioned images, takes a verified
+PostgreSQL backup if the database is already running, applies Prisma migrations, starts the
+single API replica, and checks `/readyz`, `/login`, and `/signup`. It does not automatically
+roll back a failed migration. The API binds to the host's loopback interface on `SRE_HOST_PORT`
+(8000 by default); put a TLS reverse proxy in front of it for remote access. Do not publish the
+PostgreSQL service port. Without a domain or proxy, use an SSH tunnel to inspect the private
+deployment: `ssh -L 8000:127.0.0.1:8000 user@host`, then open `http://localhost:8000`.
+
+Run `bash deploy/backup.sh` before manual maintenance and on a host scheduler. Set
+`SRE_BACKUP_DIR` to a secure directory with sufficient free space. The backup script writes a
+private custom-format dump and validates it with `pg_restore --list`; copy backups to encrypted
+off-host storage and rehearse restoration regularly. Keep the host's `deploy/` files and
+`SRE_IMAGE_TAG` in sync during updates. `docker-compose.yml` at the repository root remains the
+source-build option for local development and CI.
 
 For Kubernetes, replace both image references in `k8s/deployment.yaml` with the tested release
 image digests. Create the `agentic-sre` namespace and a `sre-secrets` Secret containing

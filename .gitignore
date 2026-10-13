@@ -61,6 +61,7 @@ cover/
 *.pot
 *.db
 data/
+deploy/backups/
 local_settings.py
 
 # Flask stuff:
