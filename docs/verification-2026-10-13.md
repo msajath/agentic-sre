@@ -10,7 +10,10 @@
   the Kubernetes ConfigMap values passed the application's production settings validation.
 - Docker runtime smoke test: not completed on this host. Docker Engine was available, but pulling
   the required base images made no progress and the isolated test project was stopped and removed
-  without creating containers or volumes. The CI workflow retains the full Docker stack smoke test.
+  without creating containers or volumes.
+- GitHub Actions: [run 38432660218](https://github.com/msajath/agentic-sre/actions/runs/38432660218)
+  for implementation commit `a1acc9f` passed all four jobs, including the Docker Compose stack
+  smoke test.
 
-The CI workflow and release publishing job have not yet run for this change. A `v*` tag is required
+The release publishing job was skipped because this was a branch push; a `v*` tag is required
 to publish versioned GHCR images. No Kubernetes cluster or remote deployment target was provided.
