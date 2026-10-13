@@ -87,3 +87,15 @@ model PlatformRecord {
 
   @@map("platform_records")
 }
+
+model AgentRun {
+  runId      String   @id @map("run_id") @db.VarChar(32)
+  incidentId String   @map("incident_id") @db.VarChar(32)
+  status     String   @db.VarChar(32)
+  state      String
+  startedAt  DateTime @default(now()) @map("started_at") @db.Timestamp(6)
+  updatedAt  DateTime @default(now()) @map("updated_at") @db.Timestamp(6)
+
+  @@index([incidentId, startedAt], map: "ix_agent_runs_incident_started")
+  @@map("agent_runs")
+}

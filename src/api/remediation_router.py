@@ -87,11 +87,11 @@ async def auto_propose_from_incident(
     diag = next((g.diagnosis for g in groups if g.root_cause_service == root_svc), None)
 
     # Evaluate rules
-    if diag:
+    if diag and diag.confidence_score > 0:
         ranked_rules = rule_engine.evaluate_rules(diag)
         action_type = ranked_rules[0].recommended_action
     else:
-        action_type = RemediationActionType.RESTART_SERVICE
+        raise HTTPException(status_code=409, detail="No current anomaly supports automatic remediation. Gather fresh evidence first.")
 
     try:
         plan = remediation_engine.propose_plan(

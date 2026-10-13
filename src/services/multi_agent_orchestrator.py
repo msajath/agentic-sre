@@ -16,6 +16,7 @@ from src.config import settings
 from src.services.incident_service import incident_service
 from src.services.ollama_adapter import ollama_adapter
 from src.services.tool_gateway import tool_gateway
+from src.services.agent_run_store import agent_run_store
 
 
 def _untrusted_json(value: Any) -> str:
@@ -70,7 +71,7 @@ class MultiAgentWorkflowState(BaseModel):
     confidence_score: float = 0.0
     proposed_remediation: Optional[Dict[str, Any]] = None
     approval_required: bool = True
-    approval_state: str = "PENDING_APPROVAL"
+    approval_state: str = "NOT_REQUESTED"
     execution_trace: List[AgentTraceStep] = Field(default_factory=list)
     llm_engine_used: str = "Sequential Local Synthesizer"
 
@@ -357,35 +358,40 @@ Return JSON matching exactly:
             raise KeyError("Incident not found.")
 
         state = MultiAgentWorkflowState(incident_id=incident_id)
+        run_id = agent_run_store.start(incident_id, state.model_dump(mode="json"))
 
-        # 1. Triage Node
-        yield {"type": "NODE_START", "node": "TRIAGE", "agent": "Triage Agent"}
-        await asyncio.sleep(0.4)
-        triage_step = await self.run_triage_node(state, incident)
-        yield {"type": "NODE_COMPLETE", "step": triage_step.model_dump(), "state": state.model_dump()}
+        try:
+            for node, agent, handler in [
+                ("TRIAGE", "Triage Agent", lambda: self.run_triage_node(state, incident)),
+                ("INVESTIGATION", "Investigation Agent", lambda: self.run_investigation_node(state)),
+                ("ROOT_CAUSE_ANALYSIS", "RCA Agent", lambda: self.run_root_cause_node(state)),
+            ]:
+                yield {"type": "NODE_START", "run_id": run_id, "node": node, "agent": agent}
+                step = await handler()
+                agent_run_store.save(run_id, state.model_dump(mode="json"), "RUNNING")
+                yield {"type": "NODE_COMPLETE", "run_id": run_id, "step": step.model_dump(), "state": state.model_dump()}
 
-        # 2. Investigation Node
-        yield {"type": "NODE_START", "node": "INVESTIGATION", "agent": "Investigation Agent"}
-        await asyncio.sleep(0.5)
-        inv_step = await self.run_investigation_node(state)
-        yield {"type": "NODE_COMPLETE", "step": inv_step.model_dump(), "state": state.model_dump()}
+            if state.confidence_score <= 0:
+                state.current_node = "NEEDS_EVIDENCE"
+                agent_run_store.save(run_id, state.model_dump(mode="json"), "NEEDS_EVIDENCE")
+                yield {"type": "WORKFLOW_CHECKPOINT", "run_id": run_id,
+                       "state": state.model_dump(),
+                       "message": "No current anomaly supports a remediation proposal. Gather fresh evidence and retry."}
+                return
 
-        # 3. Root Cause Node
-        yield {"type": "NODE_START", "node": "ROOT_CAUSE_ANALYSIS", "agent": "RCA Agent"}
-        await asyncio.sleep(0.5)
-        rca_step = await self.run_root_cause_node(state)
-        yield {"type": "NODE_COMPLETE", "step": rca_step.model_dump(), "state": state.model_dump()}
-
-        # 4. Remediation Node (Pauses at Human Gate)
-        yield {"type": "NODE_START", "node": "REMEDIATION", "agent": "Remediation Agent"}
-        await asyncio.sleep(0.4)
-        rem_step = await self.run_remediation_node(state)
-        yield {
-            "type": "WORKFLOW_CHECKPOINT",
-            "step": rem_step.model_dump(),
-            "state": state.model_dump(),
-            "message": "Workflow reached Human-in-the-Loop approval gate. Awaiting SRE authorization."
-        }
+            yield {"type": "NODE_START", "run_id": run_id, "node": "REMEDIATION", "agent": "Remediation Agent"}
+            rem_step = await self.run_remediation_node(state)
+            agent_run_store.save(run_id, state.model_dump(mode="json"), "PENDING_APPROVAL")
+            yield {
+                "type": "WORKFLOW_CHECKPOINT", "run_id": run_id,
+                "step": rem_step.model_dump(),
+                "state": state.model_dump(),
+                "message": "Workflow reached human approval. Awaiting SRE authorization."
+            }
+        except Exception:
+            state.current_node = "FAILED"
+            agent_run_store.save(run_id, state.model_dump(mode="json"), "FAILED")
+            raise
 
 
 multi_agent_orchestrator = MultiAgentOrchestrator()

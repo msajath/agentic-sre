@@ -17,6 +17,7 @@ from sqlalchemy import (
     create_engine,
     inspect,
     text,
+    Index,
 )
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.exc import ArgumentError
@@ -123,6 +124,19 @@ class PlatformRecordModel(Base):
     __tablename__ = "platform_records"
     key = Column(String(128), primary_key=True)
     payload = Column(Text, nullable=False)
+
+
+class AgentRunModel(Base):
+    __tablename__ = "agent_runs"
+
+    run_id = Column(String(32), primary_key=True)
+    incident_id = Column(String(32), nullable=False)
+    status = Column(String(32), nullable=False)
+    state = Column(Text, nullable=False)
+    started_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    __table_args__ = (Index("ix_agent_runs_incident_started", "incident_id", "started_at"),)
 
 
 def init_db():

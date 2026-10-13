@@ -19,9 +19,18 @@ from src.services.incident_service import incident_service
 from src.services.multi_agent_orchestrator import multi_agent_orchestrator
 from src.services.ollama_adapter import ollama_adapter
 from src.services.topology_graph import topology_engine
+from src.services.agent_run_store import agent_run_store
 
 router = APIRouter(prefix="/api/v1/ai", tags=["Agentic AI SRE Engine"])
 logger = logging.getLogger(__name__)
+
+
+@router.get("/investigations/{incident_id}")
+async def list_investigation_runs(incident_id: str):
+    """Return persisted stage traces for an incident, newest first."""
+    if not incident_service.get_incident(incident_id):
+        raise HTTPException(status_code=404, detail="Incident not found.")
+    return agent_run_store.list_for_incident(incident_id)
 
 
 @router.get("/status")
