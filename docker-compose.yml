@@ -28,10 +28,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: agentic-sre-platform
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "127.0.0.1:${SRE_HOST_PORT:-8000}:8000"
     environment:
       APP_NAME: Agentic SRE Platform
       ENVIRONMENT: production
@@ -41,12 +40,14 @@ services:
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
       SIMULATION_ENABLED: ${SIMULATION_ENABLED:-true}
       ALLOWED_ORIGINS: '${ALLOWED_ORIGINS:-["http://localhost:8000"]}'
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_BASE_URL: ${DOCKER_OLLAMA_BASE_URL:-https://ollama.example.internal}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1}
       HOST: 0.0.0.0
       PORT: "8000"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     depends_on:
       migrate:
         condition: service_completed_successfully

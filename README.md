@@ -103,19 +103,25 @@ load the project's `.env`; explicit process environment variables take precedenc
 - `TEST_DATABASE_URL`: required for tests; use a dedicated PostgreSQL database whose name ends in `_test`.
 - `POSTGRES_PASSWORD` and `DOCKER_DATABASE_URL`: credentials and internal connection URL for Docker Compose.
 - `SIMULATION_ENABLED=false`: telemetry-only mode; simulated remediation is disabled.
-- `OLLAMA_BASE_URL` and `OLLAMA_MODEL`: optional local inference endpoint/model. Docker can use
-  `http://host.docker.internal:11434`; a Kubernetes deployment needs a reachable configured endpoint.
+- `OLLAMA_BASE_URL` and `OLLAMA_MODEL`: optional inference endpoint/model. Production requires an
+  HTTPS endpoint; Docker reads `DOCKER_OLLAMA_BASE_URL` independently of local development settings.
+  If the endpoint is unavailable, deterministic investigation text remains available.
 
 Create a private `.env` with your own secrets, then run `docker compose up --build`. Compose starts
 PostgreSQL, waits for readiness, applies Prisma migrations in a separate container, then starts
-the API. PostgreSQL data persists in `postgres-data`; the dashboard/API image runs as a non-root user.
-The Docker database is separate from the local cluster. Set a specific
-image tag when deploying `k8s/deployment.yaml`; create a `sre-secrets` Secret in the `agentic-sre`
+the API on `127.0.0.1:8000`. PostgreSQL data persists in `postgres-data`; the dashboard/API image runs as a non-root user.
+The Docker database is separate from the local cluster. Set the published release image digests
+when deploying `k8s/deployment.yaml`; create a `sre-secrets` Secret in the `agentic-sre`
 namespace containing `secret-key`, a reachable PostgreSQL `database-url` and, for first startup,
-`bootstrap-admin-password`. Build/publish the Prisma init-container image using
-`docker build --target database -t agentic-sre-database:0.1.0 .`; its migrations run before the API.
+`bootstrap-admin-password`. The version-tag pipeline publishes the Prisma migration image alongside
+the API image; its migrations run before the API.
+Replace the example HTTPS origins and Ollama endpoint in the Kubernetes ConfigMap for your environment.
 Update allowed browser origins for your ingress. Use `/healthz` for liveness and
 `/readyz` for database/simulator readiness.
+
+See [the operations runbook](docs/operations.md) for release images, deployment checks,
+database backups, upgrade and recovery steps. Version tags run the same CI gates before publishing
+the API and migration images to GHCR; deployment to a specific cluster remains an operator action.
 
 Run **one worker and one replica**: simulation state is process-local. This is a demonstration
 platform, not a horizontally scalable production control plane. Kubernetes uses `Recreate` updates
@@ -144,6 +150,6 @@ All backend tests use `TEST_DATABASE_URL` from the process environment or the pr
 They drop application tables only in that dedicated test database and refuse application database names.
 The Postman runner creates and removes its own disposable local PostgreSQL database, then writes
 request and assertion counts to `data/postman-summary.json`. It does not modify the application database.
-See `docs/verification-2026-10-12.md` for the latest check results and remaining limits.
+See `docs/verification-2026-10-13.md` for the latest check results and remaining limits.
 CI checks PostgreSQL, Prisma migrations/client, backend security, frontend lint/build,
 and the Docker stack.

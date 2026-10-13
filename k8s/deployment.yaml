@@ -11,6 +11,10 @@ metadata:
 data:
   APP_NAME: "Agentic SRE Platform"
   ENVIRONMENT: "production"
+  SRE_DEBUG: "false"
+  SIMULATION_ENABLED: "true"
+  ALLOWED_ORIGINS: '["https://sre.example.com"]'
+  OLLAMA_BASE_URL: "https://ollama.example.internal"
   PORT: "8000"
 ---
 apiVersion: apps/v1
@@ -32,10 +36,16 @@ spec:
       labels:
         app: agentic-sre
     spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
       initContainers:
         - name: prisma-migrate
           image: agentic-sre-database:0.1.0
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           env:
             - name: DATABASE_URL
               valueFrom:
