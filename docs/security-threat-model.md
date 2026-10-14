@@ -17,7 +17,7 @@ Assets are signing keys, PostgreSQL credentials, user accounts, incident/audit h
 | Leakage through API/LLM/audit | Public Ollama health omits endpoint/model inventory; secrets are configured outside the repository; prompt inputs redact common tokens/passwords. | Central redaction policy for all stored evidence, responses and logs; private egress allowlist; retention policy; secret rotation drill. |
 | Database/audit tampering | Incident/plan writes commit with audit events; hash chain detects modification of persisted entries. | External signed checkpoints and off-host backups; a database administrator can currently rewrite or truncate the entire ledger. |
 | Service interruption or resource exhaustion | One worker/replica, bounded tool inputs, readiness/liveness probes, PostgreSQL backup script. | Per-user and per-incident quotas, queue/backpressure, circuit breakers, recovery-time objective and restore rehearsal, high-availability state migration. |
-| Vulnerable dependencies/images | CI includes Bandit, Python/npm dependency audits and image scans. | Review new CI scan results, pin action digests, generate SBOM/provenance, patch findings and enforce release policy. |
+| Vulnerable dependencies/images | CI includes Bandit, Python/npm dependency audits and image scans; the corrected application and migration images passed the high/critical scan gate. | Pin action digests, generate SBOM/provenance, patch future findings and enforce release policy. |
 
 ## Safety invariant
 
