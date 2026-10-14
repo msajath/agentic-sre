@@ -14,16 +14,17 @@ RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 # Prisma CLI is isolated from the Python runtime image.
 FROM node:22-slim AS database
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates \
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends openssl ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -g 1001 sre && useradd -u 1001 -g sre -s /usr/sbin/nologin -m sre
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm ci --omit=dev \
+    && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 COPY prisma.config.ts ./
 COPY prisma/ ./prisma/
 RUN chown -R sre:sre /app
 USER sre
-CMD ["npm", "run", "db:migrate"]
+CMD ["node", "node_modules/prisma/build/index.js", "migrate", "deploy"]
 
 FROM python:3.11-slim AS runtime
 WORKDIR /app
