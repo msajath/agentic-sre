@@ -16,4 +16,4 @@ This review compared the 17-page project blueprint with the current repository. 
 - This session exposes no browser surface, so the incident console received code/build and accessibility-attribute review but no screenshot review.
 - No VPS, domain, or Kubernetes demo cluster was available. No live deployment, Prometheus/Loki/OTel query, Kubernetes read/write operation, or staging restore rehearsal was performed.
 
-The new CI image scans and Python dependency audit are release gates. Their result must be inspected before publishing another version tag.
+The first GitHub CI run passed the Python dependency audit and all three test/lint jobs. Both images built, but the application image scan blocked the release on two fixable HIGH findings in runtime packaging tools: `jaraco.context` 5.3.0 and `wheel` 0.45.1. The runtime image now removes those unused tools; the image scans and Compose smoke test must pass in CI before publishing another version tag.

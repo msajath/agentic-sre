@@ -29,6 +29,9 @@ FROM python:3.11-slim AS runtime
 WORKDIR /app
 RUN groupadd -g 1001 sre && useradd -u 1001 -g sre -s /usr/sbin/nologin -m sre
 COPY --from=builder /install /usr/local
+# Runtime serves requests only; remove build tooling that adds avoidable CVEs.
+RUN python -m pip uninstall --yes setuptools wheel jaraco.context \
+    && python -c "import fastapi, sqlalchemy, uvicorn"
 COPY --chown=sre:sre src/ ./src/
 COPY --from=frontend --chown=sre:sre /frontend/dist ./frontend/dist
 RUN mkdir -p /app/data && chown sre:sre /app/data
