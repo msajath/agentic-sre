@@ -34,6 +34,11 @@ jobs:
         run: |
           bandit -r src/ -ll -ii
 
+      - name: Audit Python runtime dependencies
+        uses: pypa/gh-action-pip-audit@v1.1.0
+        with:
+          inputs: requirements.txt
+
       - name: Check Python Imports and Undefined Names
         run: python -m flake8 src scripts tests --select=F
 
@@ -71,6 +76,7 @@ jobs:
           cache-dependency-path: package-lock.json
       - run: pip install -r requirements-dev.txt
       - run: npm ci
+      - run: npm audit --audit-level=high
       - run: npm run db:validate
       - run: npm run db:generate
       - run: npm run db:typecheck
@@ -90,6 +96,8 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
+        working-directory: frontend
+      - run: npm audit --audit-level=high
         working-directory: frontend
       - run: npm run lint -- --deny-warnings
         working-directory: frontend
@@ -124,6 +132,24 @@ jobs:
           push: false
           load: true
           tags: agentic-sre-database:0.1.0
+
+      - name: Scan application image for fixable high and critical vulnerabilities
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: agentic-sre:0.1.0
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+
+      - name: Scan migration image for fixable high and critical vulnerabilities
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: agentic-sre-database:0.1.0
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
 
       - name: Smoke Test PostgreSQL Stack
         shell: bash

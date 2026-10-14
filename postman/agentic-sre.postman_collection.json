@@ -251,7 +251,7 @@
             "type": "text/javascript",
             "exec": [
               "pm.test(\"Ollama status returns 200\", () => pm.response.to.have.status(200));",
-              "pm.test('model inventory reported', () => pm.expect(pm.response.json().available_models).to.be.an('array'));"
+              "pm.test('provider status without private model inventory', () => { const data=pm.response.json(); pm.expect(data.is_online).to.be.a('boolean'); pm.expect(data.available_models).to.eql(undefined); });"
             ]
           }
         }
@@ -465,6 +465,38 @@
       ]
     },
     {
+      "name": "Record fresh service heartbeat",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{operatorToken}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/telemetry/heartbeat",
+        "body": {
+          "mode": "raw",
+          "raw": "{\"service_name\": \"payment-service\", \"status\": \"HEALTHY\", \"active_instances\": 1}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Record fresh service heartbeat returns 200\", () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
       "name": "Viewer cannot start agent workflow",
       "request": {
         "method": "GET",
@@ -513,6 +545,31 @@
               "const checkpoint=events.find(event => event.type==='WORKFLOW_CHECKPOINT');",
               "pm.test('remediation pauses for human approval', () => { pm.expect(checkpoint).to.exist; pm.expect(checkpoint.step.node).to.eql('REMEDIATION'); pm.expect(checkpoint.state.proposed_remediation.plan_id).to.be.a('string'); });",
               "if (checkpoint) pm.environment.set('planId', checkpoint.state.proposed_remediation.plan_id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Investigation trace persists",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{viewerToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/ai/investigations/{{incidentId}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Investigation trace persists returns 200\", () => pm.response.to.have.status(200));",
+              "pm.test('four stages saved', () => { const runs=pm.response.json(); pm.expect(runs[0].status).to.eql('PENDING_APPROVAL'); pm.expect(runs[0].state.execution_trace).to.have.length(4); });"
             ]
           }
         }
@@ -634,6 +691,31 @@
       ]
     },
     {
+      "name": "Simulation postmortem",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{viewerToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/incidents/{{incidentId}}/postmortem"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Simulation postmortem returns 200\", () => pm.response.to.have.status(200));",
+              "pm.test('report includes evidence and verification', () => { const report=pm.response.json(); pm.expect(report.mode).to.eql('simulation'); pm.expect(report.evidence.length).to.be.above(0); pm.expect(report.recovery_verification).to.be.a('string').and.not.empty; });"
+            ]
+          }
+        }
+      ]
+    },
+    {
       "name": "Create incident for rejection",
       "request": {
         "method": "POST",
@@ -659,7 +741,7 @@
       ]
     },
     {
-      "name": "Propose plan for rejection",
+      "name": "Automatic proposal blocks without fresh evidence",
       "request": {
         "method": "POST",
         "header": [
@@ -676,7 +758,39 @@
           "script": {
             "type": "text/javascript",
             "exec": [
-              "pm.test(\"Propose plan for rejection returns 201\", () => pm.response.to.have.status(201));",
+              "pm.test(\"Automatic proposal blocks without fresh evidence returns 409\", () => pm.response.to.have.status(409));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Manually propose plan for rejection",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{operatorToken}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/remediation/propose",
+        "body": {
+          "mode": "raw",
+          "raw": "{\"incident_id\": \"{{rejectIncidentId}}\", \"target_service\": \"payment-service\", \"action_type\": \"RESTART_SERVICE\"}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Manually propose plan for rejection returns 201\", () => pm.response.to.have.status(201));",
               "pm.test('plan proposed', () => pm.expect(pm.response.json().state).to.eql('PENDING_APPROVAL'));",
               "pm.environment.set('rejectPlanId', pm.response.json().plan_id);"
             ]

@@ -51,6 +51,9 @@ export default function App() {
   // AI & Remediation
   const [aiAnalysis, setAiAnalysis] = useState(null);
   const [aiLoading, setAiLoading] = useState(false);
+  const [investigationRuns, setInvestigationRuns] = useState([]);
+  const [investigationLoading, setInvestigationLoading] = useState(false);
+  const [postmortem, setPostmortem] = useState(null);
 
   // Chaos Form
   const [chaosService, setChaosService] = useState('payment-service');
@@ -75,6 +78,7 @@ export default function App() {
     setServices([]); setEdges([]); setIncident(null); setDiagnosis(null);
     setActiveFaults([]); setIncidentsList([]); setRemediationPlans([]); setAuditLogs([]);
     setAiAnalysis(null); setSelectedIncidentDetail(null); setAuditVerification(null);
+    setInvestigationRuns([]); setInvestigationLoading(false); setPostmortem(null);
     setLegacyAudit(null);
     setBenchmarkData({ metrics: null, scenarios: [] }); setSelectedScenarioReplay(null);
     setKnowledgeDocs([]); setRagSearchResults(null); setAgentsList([]);
@@ -146,6 +150,22 @@ export default function App() {
       if (res.ok) setIncidentsList(await res.json());
     } catch (e) { console.error(e); }
   }, [apiFetch]);
+
+  const fetchInvestigationRuns = useCallback(async (incidentId) => {
+    if (!incidentId) { setInvestigationRuns([]); return; }
+    try {
+      const res = await apiFetch(`/api/v1/ai/investigations/${encodeURIComponent(incidentId)}`);
+      setInvestigationRuns(await res.json());
+    } catch (error) { console.error(error); }
+  }, [apiFetch]);
+
+  useEffect(() => {
+    if (token && activeTab === 'incidents') {
+      const incidentId = selectedIncidentDetail?.incident_id || incident?.incident_id;
+      const timer = setTimeout(() => fetchInvestigationRuns(incidentId), 0);
+      return () => clearTimeout(timer);
+    }
+  }, [token, activeTab, selectedIncidentDetail?.incident_id, incident?.incident_id, fetchInvestigationRuns]);
 
   const fetchRemediationPlans = useCallback(async () => {
     try {
@@ -384,6 +404,32 @@ export default function App() {
     finally { setAiLoading(false); }
   };
 
+  const handleRunInvestigation = async () => {
+    if (!requireRole(['admin', 'lead', 'operator'], 'Run investigation')) return;
+    const incidentId = selectedIncidentDetail?.incident_id || incident?.incident_id;
+    if (!incidentId) { setApiError('Select an incident to investigate.'); return; }
+    setInvestigationLoading(true);
+    try {
+      const res = await apiFetch(`/api/v1/ai/stream-investigation/${encodeURIComponent(incidentId)}`);
+      const body = await res.text();
+      const messages = body.split('\n').filter(line => line.startsWith('data: '))
+        .map(line => JSON.parse(line.slice(6)));
+      const failure = messages.find(message => message.type === 'WORKFLOW_ERROR');
+      if (failure) throw new Error(failure.message);
+      await fetchInvestigationRuns(incidentId);
+    } catch (error) { setApiError(error.message); }
+    finally { setInvestigationLoading(false); }
+  };
+
+  const handleLoadPostmortem = async () => {
+    const incidentId = selectedIncidentDetail?.incident_id || incident?.incident_id;
+    if (!incidentId) return;
+    try {
+      const res = await apiFetch(`/api/v1/incidents/${encodeURIComponent(incidentId)}/postmortem`);
+      setPostmortem(await res.json());
+    } catch (error) { console.error(error); }
+  };
+
   const handleProposePlan = async () => {
     if (!requireRole(['admin', 'lead', 'operator'], 'Propose remediation')) return;
     if (!aiAnalysis?.incidentId) return;
@@ -397,7 +443,6 @@ export default function App() {
   const healthySvcCount = services.filter(s => s.status === 'HEALTHY').length;
   const avgP95 = services.length > 0 ? services.reduce((acc, s) => acc + (s.p95_latency_ms || 0), 0) / services.length : 0;
   const avgError = services.length > 0 ? services.reduce((acc, s) => acc + (s.error_rate || 0), 0) / services.length : 0;
-  const healthScore = Math.max(0, 100 - (avgError * 300) - (avgP95 > 500 ? 15 : 0));
 
   if (!token) return <AuthScreen apiBase={API_BASE} onAuthenticated={handleAuthenticated} />;
 
@@ -451,7 +496,7 @@ export default function App() {
         </div>
 
         {/* Top Navigation Bar with All 10 Platform Sections */}
-        <nav className="nav-tabs-bar" style={{ flexWrap: 'wrap', gap: '0.25rem' }}>
+        <nav className="nav-tabs-bar" aria-label="Platform sections">
           {[
             { id: 'overview', label: 'Overview', badge: null, core: true },
             { id: 'incidents', label: 'Incidents', badge: incident ? '1' : null, core: true },
@@ -468,6 +513,7 @@ export default function App() {
               key={tab.id}
               className={`nav-tab-btn ${activeTab === tab.id ? 'active' : ''}`}
               onClick={() => { setShow403Screen(false); setActiveTab(tab.id); }}
+              aria-current={activeTab === tab.id ? 'page' : undefined}
               style={tab.core ? { fontWeight: 700 } : {}}
             >
               {tab.label}
@@ -494,7 +540,7 @@ export default function App() {
         <div className="incident-banner active" style={{ margin: '1rem 2rem 0 2rem' }}>
           <div className="incident-banner-header">
             <div className="incident-title-row">
-              <span className="badge badge-CRITICAL">SEV-1 ACTIVE</span>
+              <span className={`badge badge-${incident.severity}`}>{incident.severity} · {incident.state}</span>
               <span className="incident-banner-title">{incident.title}</span>
             </div>
             <button 
@@ -506,7 +552,7 @@ export default function App() {
             </button>
           </div>
           <div className="incident-banner-meta" style={{ marginTop: '0.4rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-            {incident.description} | Root Cause: <strong style={{ color: '#fca5a5' }}>{incident.root_cause_service}</strong> | Blast Radius: <em>{(incident.affected_services || []).join(', ')}</em>
+            {incident.description} | Candidate service: <strong>{incident.root_cause_service || 'Unconfirmed'}</strong> | Affected services: <em>{(incident.affected_services || []).join(', ') || 'Under review'}</em>
           </div>
         </div>
       )}
@@ -525,7 +571,7 @@ export default function App() {
             </p>
             <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center' }}>
               <button className="btn btn-secondary" onClick={() => setShow403Screen(false)}>Return to Console</button>
-              <button className="btn btn-primary" onClick={() => { setShowLoginModal(true); setShow403Screen(false); }}>Sign in with another account</button>
+              <button className="btn btn-primary" onClick={clearSession}>Sign in with another account</button>
             </div>
           </div>
         ) : (
@@ -537,20 +583,20 @@ export default function App() {
               <div>
                 <div className="stat-summary-bar">
                   <div className="stat-card">
-                    <div className="stat-label">Services Monitored</div>
+                    <div className="stat-label">Healthy simulated services</div>
                     <div className="stat-val-row">
                       <span className="stat-val">{healthySvcCount} / {services.length}</span>
-                      <span className="stat-sub" style={{color: '#10b981'}}>Online</span>
+                      <span className="stat-sub">Healthy</span>
                     </div>
                   </div>
                   <div className="stat-card">
-                    <div className="stat-label">Cluster p95 Latency</div>
+                    <div className="stat-label">Mean service p95 latency</div>
                     <div className="stat-val-row">
                       <span className="stat-val">{Math.round(avgP95)} ms</span>
                     </div>
                   </div>
                   <div className="stat-card">
-                    <div className="stat-label">Cluster Error Rate</div>
+                    <div className="stat-label">Mean service error rate</div>
                     <div className="stat-val-row">
                       <span className="stat-val" style={{color: avgError > 0.05 ? 'var(--status-critical)' : 'inherit'}}>
                         {(avgError * 100).toFixed(1)}%
@@ -558,10 +604,10 @@ export default function App() {
                     </div>
                   </div>
                   <div className="stat-card">
-                    <div className="stat-label">System Health Score</div>
+                    <div className="stat-label">Injected faults</div>
                     <div className="stat-val-row">
-                      <span className="stat-val" style={{color: healthScore > 90 ? '#10b981' : (healthScore > 75 ? '#f59e0b' : '#ef4444')}}>
-                        {healthScore.toFixed(1)}%
+                      <span className="stat-val" style={{color: activeFaults.length ? 'var(--status-critical)' : 'inherit'}}>
+                        {activeFaults.length}
                       </span>
                     </div>
                   </div>
@@ -667,9 +713,11 @@ export default function App() {
                           <div style={{color: 'var(--text-muted)', padding: '1.5rem', textAlign: 'center'}}>No recorded incidents. Cluster nominal.</div>
                         ) : (
                           incidentsList.map(inc => (
-                            <div 
+                            <button type="button"
                               key={inc.incident_id} 
-                              onClick={() => setSelectedIncidentDetail(inc)}
+                              onClick={() => { setSelectedIncidentDetail(inc); setAiAnalysis(null); setInvestigationRuns([]); setPostmortem(null); }}
+                              aria-pressed={selectedIncidentDetail?.incident_id === inc.incident_id}
+                              className="incident-list-item"
                               style={{
                                 background: 'var(--bg-surface-elevated)', 
                                 border: selectedIncidentDetail?.incident_id === inc.incident_id ? '1px solid var(--border-focus)' : '1px solid var(--border-subtle)', 
@@ -689,7 +737,7 @@ export default function App() {
                               <div style={{fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: '0.35rem'}}>
                                 Root Cause: <strong>{inc.root_cause_service || 'Triage Pending'}</strong> | Severity: <strong>{inc.severity}</strong>
                               </div>
-                            </div>
+                            </button>
                           ))
                         )}
                       </div>
@@ -728,12 +776,12 @@ export default function App() {
                     <div className="ai-terminal-panel">
                       <div className="ai-terminal-header">
                         <div>
-                          <div style={{fontSize: '0.92rem', fontWeight: 700, color: '#ede9fe', display: 'flex', alignItems: 'center', gap: '0.4rem'}}>
+                          <div style={{fontSize: '0.92rem', fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '0.4rem'}}>
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" strokeWidth="2"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8z"/><path d="M12 6v6l4 2"/></svg>
-                            Agentic AI SRE Assistant
+                            Incident diagnosis
                           </div>
                           <div style={{fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.15rem'}}>
-                            Deterministic diagnosis from simulated telemetry
+                            Heuristic diagnosis from simulated telemetry
                           </div>
                         </div>
                         <button 
@@ -742,7 +790,7 @@ export default function App() {
                           disabled={aiLoading || (!incident && !selectedIncidentDetail)}
                           onClick={handleRunAiDiagnosis}
                         >
-                          {aiLoading ? 'Synthesizing...' : 'Run AI Diagnosis'}
+                          {aiLoading ? 'Diagnosing…' : 'Quick diagnosis'}
                         </button>
                       </div>
 
@@ -776,7 +824,7 @@ export default function App() {
                               </div>
                             </div>
 
-                            <button className="btn btn-primary" onClick={handleProposePlan} disabled={!aiAnalysis.incidentId}>Propose remediation</button>
+                            <button className="btn btn-primary" onClick={handleProposePlan} disabled={!aiAnalysis.incidentId || aiAnalysis.evidence_status === 'INSUFFICIENT_EVIDENCE' || !aiAnalysis.confidence}>Propose remediation</button>
                             <div>
                               <div style={{fontSize: '0.72rem', color: '#a78bfa', fontWeight: 700, marginBottom: '0.35rem', textTransform: 'uppercase'}}>Mitigation Procedure</div>
                               {(aiAnalysis.mitigation_steps || []).map((step, idx) => (
@@ -788,11 +836,61 @@ export default function App() {
                           </div>
                         ) : (
                           <div style={{padding: '2.5rem', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.82rem', border: '1px dashed rgba(255, 255, 255, 0.08)', borderRadius: 'var(--radius-md)'}}>
-                            Click <strong>"Run AI Diagnosis"</strong> or inject chaos to synthesize evidence-backed root cause hypothesis.
+                            Select an incident and run a quick diagnosis. If telemetry is healthy, the result will ask for fresh evidence.
                           </div>
                         )}
                       </div>
                     </div>
+                    <section className="investigation-panel" aria-labelledby="investigation-heading">
+                      <div className="investigation-heading-row">
+                        <div>
+                          <h2 id="investigation-heading">Investigation trace</h2>
+                          <p>Review the decisions and tool calls saved for this incident.</p>
+                        </div>
+                        <button className="btn btn-primary" onClick={handleRunInvestigation}
+                          disabled={investigationLoading || (!incident && !selectedIncidentDetail)}>
+                          {investigationLoading ? 'Investigating…' : 'Run investigation'}
+                        </button>
+                      </div>
+                      {investigationRuns.length ? (
+                        <div className="run-detail">
+                          <div className="run-status-row">
+                            <span className={`run-status run-status-${investigationRuns[0].status.toLowerCase()}`}>{investigationRuns[0].status.replaceAll('_', ' ')}</span>
+                            <span>Run {investigationRuns[0].run_id.slice(0, 8)} · {new Date(investigationRuns[0].started_at).toLocaleString()}</span>
+                          </div>
+                          <ol className="trace-steps">
+                            {investigationRuns[0].state.execution_trace.map((step, index) => (
+                              <li key={`${step.node}-${index}`}>
+                                <div><strong>{step.node.replaceAll('_', ' ')}</strong><span>{step.status.replaceAll('_', ' ')}</span></div>
+                                <p>{step.thought_process}</p>
+                                {step.tools_called.length > 0 && <small>{step.tools_called.length} typed tool calls</small>}
+                              </li>
+                            ))}
+                          </ol>
+                          {investigationRuns[0].status === 'NEEDS_EVIDENCE' && <p className="evidence-notice">No current anomaly supports a restart. Collect fresh telemetry, then investigate again.</p>}
+                        </div>
+                      ) : <p className="investigation-empty">Select an incident and run an investigation to see its saved decisions and tool calls.</p>}
+                    </section>
+                    {['RESOLVED', 'CLOSED'].includes(selectedIncidentDetail?.state || incident?.state) && (
+                      <section className="postmortem-panel" aria-labelledby="postmortem-heading">
+                        <div className="investigation-heading-row">
+                          <div>
+                            <h2 id="postmortem-heading">Incident report</h2>
+                            <p>Generated from the saved simulation timeline and verification result.</p>
+                          </div>
+                          <button className="btn btn-secondary" onClick={handleLoadPostmortem}>View report</button>
+                        </div>
+                        {postmortem && (
+                          <div className="postmortem-detail">
+                            <p><strong>Impact:</strong> {postmortem.affected_services.join(', ') || 'Unknown'}. {postmortem.impact_note}</p>
+                            <p><strong>Cause candidate:</strong> {postmortem.root_cause_candidate || 'Unconfirmed'}. {postmortem.causality_note}</p>
+                            <p><strong>Recovery:</strong> {postmortem.recovery_verification || 'No verified recovery note was recorded.'}</p>
+                            <h3>Decision timeline</h3>
+                            <ol>{postmortem.timeline.map(event => <li key={event.event_id}>{new Date(event.timestamp).toLocaleString()} — {event.action}</li>)}</ol>
+                          </div>
+                        )}
+                      </section>
+                    )}
                   </div>
                 </div>
               </div>

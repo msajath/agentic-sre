@@ -6,6 +6,12 @@ Optional local Ollama produces investigation explanations. Diagnosis and action 
 Python heuristics. This version does **not** use LangGraph, execute Kubernetes actions, or provide
 vector/semantic RAG. Runbooks use persisted lexical search. Benchmarks execute isolated simulated
 cycles; their timings are harness durations, not production MTTD/MTTR.
+See [the blueprint gap analysis](docs/blueprint-gap-analysis.md),
+[security threat model](docs/security-threat-model.md), and
+[latest verification record](docs/verification-2026-10-14.md) before describing this as a
+production-ready SRE control plane. Investigations now persist their stage traces in PostgreSQL;
+when no anomaly is observed they stop without proposing remediation. Resolved incidents have a
+factual simulation postmortem at `GET /api/v1/incidents/{incident_id}/postmortem`.
 
 ## Local setup
 

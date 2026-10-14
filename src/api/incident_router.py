@@ -16,8 +16,20 @@ from src.models.incident import (
 )
 from src.services.auth_service import require_roles
 from src.services.incident_service import incident_service
+from src.services.postmortem_service import postmortem_service
 
 router = APIRouter(prefix="/api/v1/incidents", tags=["Incident Management"])
+
+
+@router.get("/{incident_id}/postmortem")
+async def get_postmortem(incident_id: str):
+    """Assemble a factual report after simulated recovery verification."""
+    try:
+        return postmortem_service.generate(incident_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("", response_model=List[IncidentRecord])

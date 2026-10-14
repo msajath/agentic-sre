@@ -42,7 +42,7 @@ add("AI engine status", "GET", "/api/v1/ai/status", role="operator", checks=[
     "pm.test('AI operational with provider status', () => { const data=pm.response.json(); pm.expect(data.status).to.eql('operational'); pm.expect(data.ollama.is_online).to.be.a('boolean'); });",
 ])
 add("Ollama status", "GET", "/api/v1/ai/ollama-status", role="operator", checks=[
-    "pm.test('model inventory reported', () => pm.expect(pm.response.json().available_models).to.be.an('array'));",
+    "pm.test('provider status without private model inventory', () => { const data=pm.response.json(); pm.expect(data.is_online).to.be.a('boolean'); pm.expect(data.available_models).to.eql(undefined); });",
 ])
 add("Agent catalog", "GET", "/api/v1/agents", role="viewer", checks=[
     "pm.test('four registered stages', () => pm.expect(pm.response.json()).to.have.length(4));",
@@ -65,6 +65,9 @@ add("Analyze incident", "POST", "/api/v1/ai/analyze-incident/{{incidentId}}", ro
 add("Inject simulated fault", "POST", "/api/v1/chaos/inject", 201, role="admin", body={
     "service_name": "payment-service", "fault_type": "SERVICE_CRASH", "duration_sec": 120,
 }, checks=["pm.test('fault targets payment', () => pm.expect(pm.response.json().service_name).to.eql('payment-service'));"])
+add("Record fresh service heartbeat", "POST", "/api/v1/telemetry/heartbeat", role="operator", body={
+    "service_name": "payment-service", "status": "HEALTHY", "active_instances": 1,
+})
 add("Viewer cannot start agent workflow", "GET", "/api/v1/ai/stream-investigation/{{incidentId}}", 403, role="viewer")
 add("Stream all agent stages to human gate", "GET", "/api/v1/ai/stream-investigation/{{incidentId}}", role="operator", checks=[
     "const events=pm.response.text().split(/\\r?\\n/).filter(line => line.startsWith('data: ')).map(line => JSON.parse(line.slice(6)));",
@@ -73,6 +76,9 @@ add("Stream all agent stages to human gate", "GET", "/api/v1/ai/stream-investiga
     "const checkpoint=events.find(event => event.type==='WORKFLOW_CHECKPOINT');",
     "pm.test('remediation pauses for human approval', () => { pm.expect(checkpoint).to.exist; pm.expect(checkpoint.step.node).to.eql('REMEDIATION'); pm.expect(checkpoint.state.proposed_remediation.plan_id).to.be.a('string'); });",
     "if (checkpoint) pm.environment.set('planId', checkpoint.state.proposed_remediation.plan_id);",
+])
+add("Investigation trace persists", "GET", "/api/v1/ai/investigations/{{incidentId}}", role="viewer", checks=[
+    "pm.test('four stages saved', () => { const runs=pm.response.json(); pm.expect(runs[0].status).to.eql('PENDING_APPROVAL'); pm.expect(runs[0].state.execution_trace).to.have.length(4); });",
 ])
 add("Plan pending approval", "GET", "/api/v1/remediation/plans/{{planId}}", role="viewer", checks=[
     "pm.test('plan pending', () => pm.expect(pm.response.json().state).to.eql('PENDING_APPROVAL'));",
@@ -88,10 +94,16 @@ add("Admin approves simulated recovery", "POST", "/api/v1/remediation/plans/{{pl
 add("Incident resolved", "GET", "/api/v1/incidents/{{incidentId}}", role="viewer", checks=[
     "pm.test('incident resolved', () => pm.expect(pm.response.json().state).to.eql('RESOLVED'));",
 ])
+add("Simulation postmortem", "GET", "/api/v1/incidents/{{incidentId}}/postmortem", role="viewer", checks=[
+    "pm.test('report includes evidence and verification', () => { const report=pm.response.json(); pm.expect(report.mode).to.eql('simulation'); pm.expect(report.evidence.length).to.be.above(0); pm.expect(report.recovery_verification).to.be.a('string').and.not.empty; });",
+])
 add("Create incident for rejection", "POST", "/api/v1/incidents?title=Postman%20rejection%20path&description=Human%20rejects%20unsafe%20recovery&root_cause_service=payment-service", 201, role="operator", checks=[
     "pm.environment.set('rejectIncidentId', pm.response.json().incident_id);",
 ])
-add("Propose plan for rejection", "POST", "/api/v1/remediation/auto-propose/{{rejectIncidentId}}", 201, role="operator", checks=[
+add("Automatic proposal blocks without fresh evidence", "POST", "/api/v1/remediation/auto-propose/{{rejectIncidentId}}", 409, role="operator")
+add("Manually propose plan for rejection", "POST", "/api/v1/remediation/propose", 201, role="operator", body={
+    "incident_id": "{{rejectIncidentId}}", "target_service": "payment-service", "action_type": "RESTART_SERVICE",
+}, checks=[
     "pm.test('plan proposed', () => pm.expect(pm.response.json().state).to.eql('PENDING_APPROVAL'));",
     "pm.environment.set('rejectPlanId', pm.response.json().plan_id);",
 ])

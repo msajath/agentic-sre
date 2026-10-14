@@ -1,8 +1,9 @@
 # API workflow checks
 
 Import `agentic-sre.postman_collection.json` and `isolated.postman_environment.json` into Postman.
-The collection runs its 30 requests in order and checks authentication, role permissions,
-agent investigation stages, the human approval gate, recovery, rejection, and audit integrity.
+The collection runs its 34 requests in order and checks authentication, role permissions,
+persisted agent investigation stages, fresh-evidence gating, the human approval gate,
+recovery, postmortem, rejection, and audit integrity.
 Set the six account variables in the environment before a manual run. Use a disposable
 PostgreSQL database because this collection creates incidents and plans.
 

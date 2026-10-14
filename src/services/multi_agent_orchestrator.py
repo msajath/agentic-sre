@@ -5,10 +5,10 @@ Streams structured stages with optional Ollama narration and a durable approval 
 Complies with Section 4 (Multi-Agent Architecture) and Section 5 (Incident Workflow).
 """
 
-import asyncio
 from datetime import datetime, timezone
 import json
 import math
+import re
 from typing import Any, AsyncGenerator, Dict, List, Optional
 from pydantic import BaseModel, Field, ValidationError
 
@@ -19,9 +19,28 @@ from src.services.tool_gateway import tool_gateway
 from src.services.agent_run_store import agent_run_store
 
 
+_SENSITIVE_KEY = re.compile(r"password|secret|token|authorization|api[_-]?key|credential", re.IGNORECASE)
+_BEARER = re.compile(r"\b(Bearer\s+)[A-Za-z0-9._~+/-]+", re.IGNORECASE)
+_INLINE_SECRET = re.compile(r"\b(password|secret|token|api[_-]?key)\s*[:=]\s*[^\s,;]+", re.IGNORECASE)
+_URL_PASSWORD = re.compile(r"(postgres(?:ql)?://[^:/\s]+:)[^@\s]+(@)", re.IGNORECASE)
+
+
+def _redact_untrusted(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: "[REDACTED]" if _SENSITIVE_KEY.search(str(key)) else _redact_untrusted(item)
+                for key, item in value.items()}
+    if isinstance(value, list):
+        return [_redact_untrusted(item) for item in value]
+    if isinstance(value, str):
+        value = _URL_PASSWORD.sub(r"\1[REDACTED]\2", value)
+        value = _BEARER.sub(r"\1[REDACTED]", value)
+        return _INLINE_SECRET.sub(r"\1=[REDACTED]", value)
+    return value
+
+
 def _untrusted_json(value: Any) -> str:
-    """Serialize evidence so delimiter-like content cannot become prompt syntax."""
-    return (json.dumps(value, ensure_ascii=True)
+    """Redact common credentials and serialize evidence as data for model context."""
+    return (json.dumps(_redact_untrusted(value), ensure_ascii=True)
             .replace("<", "\\u003c")
             .replace(">", "\\u003e")
             .replace("&", "\\u0026"))
@@ -168,6 +187,7 @@ will calculate authoritative values independently. Return JSON matching exactly:
                 "service": svc,
                 "error_rate": health_res.output.get("error_rate"),
                 "p95_latency_ms": health_res.output.get("p95_latency_ms"),
+                "last_heartbeat": health_res.output.get("last_heartbeat"),
                 "faults": health_res.output.get("active_faults")
             })
 
@@ -230,12 +250,24 @@ will calculate authoritative values independently. Return JSON matching exactly:
                       "error_rate": metric(e.get("error_rate")), "p95_latency_ms": metric(e.get("p95_latency_ms"))}
                      for e in state.evidence_bundle if e.get("service") in state.blast_radius
                      and ("error_rate" in e or "p95_latency_ms" in e or "faults" in e)]
+        def fresh_heartbeat(value):
+            try:
+                heartbeat = datetime.fromisoformat(value)
+                if heartbeat.tzinfo is None:
+                    heartbeat = heartbeat.replace(tzinfo=timezone.utc)
+                age = (datetime.now(timezone.utc) - heartbeat).total_seconds()
+                return 0 <= age <= 60
+            except (TypeError, ValueError):
+                return False
+
         ranked_svcs = sorted(
-            telemetry,
+            (e for e in telemetry if fresh_heartbeat(e.get("last_heartbeat")) and
+             (e.get("faults") or e.get("error_rate", 0) > settings.anomaly_error_rate_threshold or
+              e.get("p95_latency_ms", 0) > settings.anomaly_latency_p95_ms)),
             key=lambda e: (len(e.get("faults", [])) * 10) + (e.get("error_rate", 0) * 100) + (e.get("p95_latency_ms", 0) / 100),
             reverse=True
         )
-        has_live_anomaly = any(e.get("faults") or e.get("error_rate", 0) > settings.anomaly_error_rate_threshold or e.get("p95_latency_ms", 0) > settings.anomaly_latency_p95_ms for e in ranked_svcs)
+        has_live_anomaly = bool(ranked_svcs)
         top_culprit = ranked_svcs[0]["service"] if has_live_anomaly else state.root_cause_service
 
         evidence = {

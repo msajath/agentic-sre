@@ -4,6 +4,7 @@ Enforces human-in-the-loop gates (RBAC: SRE_LEAD/ADMIN) and post-action health r
 """
 
 from typing import List, Optional
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from src.models.auth import User, UserRole
@@ -12,13 +13,16 @@ from src.models.remediation import (
     ProposePlanRequest,
     RemediationPlan,
     RemediationState,
-    RemediationActionType,
 )
 from src.services.auth_service import require_roles
 from src.services.event_correlator import event_correlator
 from src.services.incident_service import incident_service
 from src.services.remediation_engine import remediation_engine
 from src.services.rule_engine import rule_engine
+from src.services.topology_graph import topology_engine
+from src.config import settings
+from src.models.incident import IncidentState
+from src.services.telemetry_stream import telemetry_stream
 
 router = APIRouter(prefix="/api/v1/remediation", tags=["Remediation & Approval Gateway"])
 
@@ -81,6 +85,21 @@ async def auto_propose_from_incident(
     root_svc = incident.root_cause_service
     if not root_svc:
         raise HTTPException(status_code=400, detail="Identify a root cause service before proposing remediation.")
+    if not settings.simulation_enabled or incident.state in {IncidentState.RESOLVED, IncidentState.CLOSED}:
+        raise HTTPException(status_code=400, detail="Automatic remediation requires an active simulation incident.")
+    if not topology_engine.is_service_registered(root_svc):
+        raise HTTPException(status_code=400, detail="Incident service is not registered in topology.")
+    health = telemetry_stream.get_service_summary(root_svc)
+    heartbeat = health.last_heartbeat
+    if heartbeat and heartbeat.tzinfo is None:
+        heartbeat = heartbeat.replace(tzinfo=timezone.utc)
+    heartbeat_age = ((datetime.now(timezone.utc) - heartbeat).total_seconds()
+                     if heartbeat else float("inf"))
+    if heartbeat_age < 0 or heartbeat_age > 60 or not (
+        health.active_faults or health.error_rate > settings.anomaly_error_rate_threshold or
+        health.p95_latency_ms > settings.anomaly_latency_p95_ms
+    ):
+        raise HTTPException(status_code=409, detail="No fresh service anomaly supports automatic remediation.")
     
     # Run ad-hoc diagnosis to feed rule engine
     groups = event_correlator.correlate_active_alerts()

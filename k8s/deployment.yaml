@@ -100,6 +100,12 @@ spec:
               port: 8000
             initialDelaySeconds: 10
             periodSeconds: 15
+          startupProbe:
+            httpGet:
+              path: /readyz
+              port: 8000
+            periodSeconds: 5
+            failureThreshold: 24
           readinessProbe:
             httpGet:
               path: /readyz

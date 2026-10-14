@@ -71,12 +71,23 @@ def test_full_http_approval_flow(client, headers):
     assert response.json()["state"] == "VERIFIED_SUCCESSFUL"
     assert incident_service.get_incident(incident.incident_id).state == IncidentState.RESOLVED
     assert audit_service.verify_integrity().is_valid
+    report = client.get(f"/api/v1/incidents/{incident.incident_id}/postmortem")
+    assert report.status_code == 200
+    assert report.json()["mode"] == "simulation"
+    assert report.json()["recovery_verification"]
+    assert report.json()["remediation_plans"][0]["approved_by"] == "lead"
+
+
+def test_postmortem_waits_for_verified_resolution(client):
+    incident = incident_service.create_incident("Open incident", "No verified recovery", root_cause_service="payment-service")
+    assert client.get(f"/api/v1/incidents/{incident.incident_id}/postmortem").status_code == 409
+    assert client.get("/api/v1/incidents/INC-NOTFOUND/postmortem").status_code == 404
 
 def test_auto_propose_without_anomalies(client):
     incident, plan = incident_and_plan()
     response = client.post(f"/api/v1/remediation/auto-propose/{incident.incident_id}")
-    assert response.status_code == 201, response.text
-    assert response.json()["plan_id"] == plan.plan_id
+    assert response.status_code == 409, response.text
+    assert remediation_engine.list_plans() == [plan]
 
 @pytest.mark.parametrize("kind", ["LATENCY", "RESOURCE_SATURATION"])
 def test_frontend_fault_types_are_valid(client, headers, kind):
@@ -187,6 +198,8 @@ def test_benchmarks_measure_actual_isolated_runs(client, scenario):
 
 def test_stream_persists_human_checkpoint(client, monkeypatch):
     incident, plan = incident_and_plan()
+    chaos_controller.inject_fault(ChaosInjectionRequest(service_name="payment-service", fault_type=FaultType.SERVICE_CRASH))
+    simulation_engine.simulate_cycle()
     async def offline(*args, **kwargs):
         return {"content":None,"is_local_llm":False}
     monkeypatch.setattr(ollama_adapter, "generate_response", offline)
@@ -195,6 +208,9 @@ def test_stream_persists_human_checkpoint(client, monkeypatch):
     assert events[-1]["type"] == "WORKFLOW_CHECKPOINT"
     assert events[-1]["state"]["proposed_remediation"]["plan_id"] == plan.plan_id
     assert remediation_engine.get_plan(plan.plan_id).state == RemediationState.PENDING_APPROVAL
+    runs = client.get(f"/api/v1/ai/investigations/{incident.incident_id}").json()
+    assert runs[0]["status"] == "PENDING_APPROVAL"
+    assert len(runs[0]["state"]["execution_trace"]) == 4
 
 
 def test_viewer_cannot_start_approval_workflow(client, headers):
