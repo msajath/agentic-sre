@@ -217,6 +217,9 @@ tempCodeRunnerFile.py
 # PyPI configuration file
 .pypirc
 
+# Local verification scratch files and rendered previews
+tmp/
+
 # Marimo
 marimo/_static/
 marimo/_lsp/

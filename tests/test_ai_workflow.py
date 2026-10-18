@@ -2,6 +2,7 @@
 import asyncio
 import json
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -86,6 +87,60 @@ def test_stale_telemetry_cannot_support_remediation(monkeypatch):
     step = asyncio.run(multi_agent_orchestrator.run_root_cause_node(state))
     assert step.output["evidence_status"] == "INSUFFICIENT_EVIDENCE"
     assert state.confidence_score == 0.0
+
+
+@pytest.mark.parametrize(
+    ("narrated_service", "uses_model_narration"),
+    [("order-service", False), ("payment-service", True)],
+)
+def test_root_cause_narration_must_match_ranked_telemetry(monkeypatch, narrated_service, uses_model_narration):
+    async def narrate(*args, **kwargs):
+        return {
+            "content": json.dumps({
+                "root_cause_service": narrated_service,
+                "causal_chain": f"Model attributes the fault to {narrated_service}.",
+            }),
+            "is_local_llm": True,
+            "engine": "Local Ollama",
+        }
+
+    monkeypatch.setattr(ollama_adapter, "generate_response", narrate)
+    heartbeat = datetime.now(timezone.utc).isoformat()
+    state = MultiAgentWorkflowState(
+        incident_id="INC-NARRATION",
+        blast_radius=["payment-service", "order-service"],
+        root_cause_service="payment-service",
+        evidence_bundle=[
+            {"source": "Simulated telemetry", "service": "payment-service", "error_rate": 0.9,
+             "p95_latency_ms": 3000, "faults": ["SERVICE_CRASH"], "last_heartbeat": heartbeat},
+            {"source": "Simulated telemetry", "service": "order-service", "error_rate": 0.1,
+             "p95_latency_ms": 500, "faults": [], "last_heartbeat": heartbeat},
+        ],
+    )
+
+    step = asyncio.run(multi_agent_orchestrator.run_root_cause_node(state))
+
+    assert step.output["root_cause_service"] == "payment-service"
+    assert ("Model attributes the fault" in step.thought_process) is uses_model_narration
+    assert state.llm_engine_used == ("Local Ollama" if uses_model_narration else "Sequential Local Synthesizer")
+
+
+def test_invalid_triage_narration_uses_fallback_and_reports_synthesizer(monkeypatch):
+    async def invalid(*args, **kwargs):
+        return {"content": "not JSON", "is_local_llm": True, "engine": "Local Ollama"}
+
+    monkeypatch.setattr(ollama_adapter, "generate_response", invalid)
+    incident = SimpleNamespace(
+        incident_id="INC-TRIAGE", title="Payment service crash", description="Synthetic alert",
+        severity=IncidentSeverity.HIGH, root_cause_service="payment-service",
+        affected_services=["order-service"],
+    )
+    state = MultiAgentWorkflowState(incident_id=incident.incident_id)
+
+    step = asyncio.run(multi_agent_orchestrator.run_triage_node(state, incident))
+
+    assert "Telemetry indicates" in step.thought_process
+    assert state.llm_engine_used == "Sequential Local Synthesizer"
 
 
 def test_ollama_adapter_selects_installed_model_and_requires_nonempty_result(monkeypatch):

@@ -136,11 +136,12 @@ will calculate authoritative values independently. Return JSON matching exactly:
             response_format={"type": "object"},
         )
 
-        narration = _validated_json_content(ollama_res.get("content"), _TriageNarration)
+        narration = (_validated_json_content(ollama_res.get("content"), _TriageNarration)
+                     if ollama_res.get("is_local_llm") else None)
         thought = (narration.reasoning if narration else
                    f"Telemetry indicates multi-node service degradation originating around {service_name} cascading into {affected}.")
-        if ollama_res.get("is_local_llm"):
-            state.llm_engine_used = ollama_res.get("engine")
+        if narration:
+            state.llm_engine_used = ollama_res.get("engine") or "Local Ollama"
 
         state.severity = incident.severity.value
         symptoms = f"{incident.title} {incident.description}".lower()
@@ -291,13 +292,14 @@ Return JSON matching exactly:
             response_format={"type": "object"},
         )
 
-        narration = _validated_json_content(ollama_res.get("content"), _RcaNarration)
-        trusted_narration = narration if narration and narration.root_cause_service in state.blast_radius else None
-        thought = (trusted_narration.causal_chain if has_live_anomaly and trusted_narration else None) or (
+        narration = (_validated_json_content(ollama_res.get("content"), _RcaNarration)
+                     if ollama_res.get("is_local_llm") else None)
+        trusted_narration = narration if has_live_anomaly and narration and narration.root_cause_service == top_culprit else None
+        thought = (trusted_narration.causal_chain if trusted_narration else None) or (
             f"Simulated telemetry ranks [{top_culprit}] as the leading candidate. This heuristic does not establish causation."
             if has_live_anomaly else "No current anomaly was observed; the incident's recorded service remains an unverified candidate. Gather fresh evidence before approval."
         )
-        if ollama_res.get("is_local_llm") and has_live_anomaly:
+        if trusted_narration:
             state.llm_engine_used = ollama_res.get("engine") or "Local Ollama"
 
         state.root_cause_service = top_culprit
@@ -364,7 +366,7 @@ Return JSON matching exactly:
         state.approval_state = "PENDING_APPROVAL"
         state.current_node = "HUMAN_APPROVAL_CHECKPOINT"
 
-        thought = f"Synthesized containment plan for [{root_svc}]. Action classified as MEDIUM RISK (State-changing mutation) â€” pausing at Human Approval Barrier."
+        thought = f"Synthesized containment plan for [{root_svc}]. Action classified as MEDIUM RISK (state-changing mutation) - pausing at the human approval barrier."
 
         step = AgentTraceStep(
             node="REMEDIATION",
